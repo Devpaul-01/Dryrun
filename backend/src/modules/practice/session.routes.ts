@@ -10,8 +10,9 @@ import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
 import * as sessionService from './session.service';
 import * as debriefService from '../coaching/debrief.service';
-import { createSessionSchema, sendMessageSchema, renameSessionSchema, listSessionsQuerySchema, attachmentsSchema } from './session.schemas';
+import { createSessionSchema, sendMessageSchema, renameSessionSchema, listSessionsQuerySchema, messagesQuerySchema, attachmentsSchema } from './session.schemas';
 import { cached, cacheKeys, cacheTags, CACHE_TTL } from '../../config/cache';
+import { fetchMessagesPage } from '../../lib/messagesPagination';
 
 const router = Router();
 
@@ -140,15 +141,25 @@ router.post(
 
 router.get(
   '/:id/messages',
+  validate({ query: messagesQuerySchema }),
   asyncHandler(async (req, res) => {
     await sessionService.getSessionById(req.params.id, req.workspace!.id); // 404s if not found/owned
-    const { data } = await supabaseAdmin()
-      .from('session_messages')
-      .select('id, role, content, sequence_index, created_at')
-      .eq('session_id', req.params.id)
-      .neq('role', 'system')
-      .order('sequence_index', { ascending: true });
-    res.json({ messages: data ?? [] });
+    const { cursor, limit } = req.query as unknown as z.infer<typeof messagesQuerySchema>;
+
+    // Deliberately NOT cached: an active session's messages change on
+    // every sendMessage() turn (two new rows per turn), which would mean
+    // invalidating this on the hottest write path in the product for a
+    // read that's already a cheap indexed query
+    // (idx_session_messages_session_seq). Pagination is the actual fix
+    // for "don't load the whole transcript every time" — a cache would
+    // add invalidation surface without solving a real cost problem here.
+    const page = await fetchMessagesPage(
+      supabaseAdmin(),
+      req.params.id,
+      { cursor, limit },
+      'id, role, content, sequence_index, created_at'
+    );
+    res.json(page);
   })
 );
 

@@ -72,17 +72,13 @@ export async function getAllQueueDepths(): Promise<Record<string, { waiting: num
   return result;
 }
 
-export async function getDeadLetterJobs(): Promise<{ queue: string; id: string; name: string; failedReason: string }[]> {
-  const results: { queue: string; id: string; name: string; failedReason: string }[] = [];
-  for (const name of QUEUE_NAMES) {
-    const queue = getQueue(name);
-    const failed = await queue.getFailed(0, 50);
-    for (const job of failed) {
-      results.push({ queue: name, id: job.id ?? '', name: job.name, failedReason: job.failedReason ?? '' });
-    }
-  }
-  return results;
-}
+/**
+ * NOTE: the unpaginated getDeadLetterJobs() that used to live here has been
+ * replaced by jobs/deadLetterPagination.ts's fetchDeadLetterPage(), which
+ * merges all five queues' failed-job sets into one cursor-paginated feed.
+ * getQueue() (above) is exported specifically so that module can reach
+ * each queue without duplicating the Queue-instance-caching logic here.
+ */
 
 export async function retryJob(queueName: string, jobId: string): Promise<void> {
   const queue = getQueue(queueName as QueueName);
