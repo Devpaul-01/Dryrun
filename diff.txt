@@ -1,0 +1,571 @@
+diff --git a/backend/src/jobs/workers/synthesizePersona.worker.ts b/backend/src/jobs/workers/synthesizePersona.worker.ts
+index 6f78046..a13d6b8 100644
+--- a/backend/src/jobs/workers/synthesizePersona.worker.ts
++++ b/backend/src/jobs/workers/synthesizePersona.worker.ts
+@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../../config/supabase';
+ import { generatePersona } from '../../modules/ai/ai.service';
+ import { publishStatus } from '../../realtime/channels';
+ import { createLogger } from '../../config/logger';
++import { invalidateTag, cacheTags } from '../../config/cache';
+ 
+ const log = createLogger('synthesize-persona-worker');
+ 
+@@ -44,6 +45,10 @@ export async function synthesizePersonaHandler(
+       .eq('id', personaId);
+ 
+     await supabaseAdmin().from('persona_sources').update({ status: 'synthesized' }).eq('id', personaSourceId);
++
++    // The workspace's persona list cache still holds the "Generating…"
++    // placeholder from createPersonaFromSource() until this invalidates it.
++    await invalidateTag(cacheTags.personasWorkspace(workspaceId));
+     await publishStatus('persona', personaId, 'ready_for_review', { personaId });
+   } catch (err) {
+     log.error({ err, personaId }, 'Persona synthesis failed');
+diff --git a/backend/src/modules/billing/billing.service.ts b/backend/src/modules/billing/billing.service.ts
+index 8187e93..07fe206 100644
+--- a/backend/src/modules/billing/billing.service.ts
++++ b/backend/src/modules/billing/billing.service.ts
+@@ -5,6 +5,7 @@ import { PaymentProvider } from './paymentProvider.interface';
+ import { env } from '../../config/env';
+ import { trackEvent } from '../analytics/analytics.service';
+ import { createLogger } from '../../config/logger';
++import { cached, cacheKeys, CACHE_TTL } from '../../config/cache';
+ 
+ const log = createLogger('billing-service');
+ 
+@@ -13,9 +14,20 @@ function getProvider(name = 'flutterwave'): PaymentProvider {
+   return providers[name];
+ }
+ 
++/**
++ * Cached: the active plans catalog changes only via direct DB/admin-panel
++ * action outside this codebase (no app code writes to `plans` at all —
++ * confirmed by grep across every module), so a 30-minute TTL with no
++ * explicit invalidation hook is safe. If an admin endpoint for editing
++ * plans is added later, it must call
++ * `invalidate(cacheKeys.plansActive())` (and the by-key/by-id variants
++ * below) on write.
++ */
+ export async function listPlans() {
+-  const { data } = await supabaseAdmin().from('plans').select('*').eq('is_active', true).order('price_amount', { ascending: true });
+-  return data ?? [];
++  return cached(cacheKeys.plansActive(), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
++    const { data } = await supabaseAdmin().from('plans').select('*').eq('is_active', true).order('price_amount', { ascending: true });
++    return data ?? [];
++  });
+ }
+ 
+ export async function getCurrentSubscription(workspaceId: string) {
+@@ -30,7 +42,10 @@ export async function getCurrentSubscription(workspaceId: string) {
+ }
+ 
+ export async function initiateCheckout(workspaceId: string, planKey: string, userEmail: string) {
+-  const { data: plan } = await supabaseAdmin().from('plans').select('*').eq('key', planKey).single();
++  const plan = await cached(cacheKeys.planByKey(planKey), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
++    const { data } = await supabaseAdmin().from('plans').select('*').eq('key', planKey).single();
++    return data ?? null;
++  });
+   if (!plan) throw ApiError.notFound('Plan not found.');
+ 
+   const provider = getProvider();
+diff --git a/backend/src/modules/billing/entitlements.ts b/backend/src/modules/billing/entitlements.ts
+index a50a47a..f96060a 100644
+--- a/backend/src/modules/billing/entitlements.ts
++++ b/backend/src/modules/billing/entitlements.ts
+@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../../config/supabase';
+ import { isPaymentEnforcementEnabled } from '../../config/systemConfig';
+ import { trackEvent } from '../analytics/analytics.service';
+ import { ResolvedWorkspace } from '../../middleware/resolveWorkspace';
++import { cached, cacheKeys, CACHE_TTL } from '../../config/cache';
+ 
+ export interface EntitlementResult {
+   allowed: boolean;
+@@ -55,14 +56,26 @@ async function resolveEffectivePlan(workspaceId: string) {
+   return getFreePlan();
+ }
+ 
++/**
++ * Cached — resolveEffectivePlan() is called on every single entitlement
++ * check (session start, playbook generation, persona-from-doc, invites),
++ * making this one of the hottest reads in the backend. Same no-app-writer
++ * rationale as billing.service.ts's plan caches: `plans` rows are managed
++ * outside application code, so a 30-minute TTL with no invalidation call
++ * is safe today.
++ */
+ async function getPlanById(planId: string) {
+-  const { data } = await supabaseAdmin().from('plans').select('*').eq('id', planId).single();
+-  return data;
++  return cached(cacheKeys.planById(planId), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
++    const { data } = await supabaseAdmin().from('plans').select('*').eq('id', planId).single();
++    return data;
++  });
+ }
+ 
+ async function getFreePlan() {
+-  const { data } = await supabaseAdmin().from('plans').select('*').eq('key', 'free').single();
+-  return data;
++  return cached(cacheKeys.planByKey('free'), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
++    const { data } = await supabaseAdmin().from('plans').select('*').eq('key', 'free').single();
++    return data;
++  });
+ }
+ 
+ /**
+diff --git a/backend/src/modules/coaching/badges.service.ts b/backend/src/modules/coaching/badges.service.ts
+index 24b1f80..8979063 100644
+--- a/backend/src/modules/coaching/badges.service.ts
++++ b/backend/src/modules/coaching/badges.service.ts
+@@ -1,4 +1,5 @@
+ import { supabaseAdmin } from '../../config/supabase';
++import { cached, invalidate, cacheKeys, CACHE_TTL } from '../../config/cache';
+ 
+ interface BadgeCandidate {
+   type: string;
+@@ -26,6 +27,7 @@ export async function checkAndAwardBadges(userId: string, workspaceId: string, s
+     { type: 'ghostbuster', label: '👻 Ghostbuster', description: 'Earned a reply from Radio Silence', condition: scenarioType === 'radio_silence' },
+   ];
+ 
++  let awardedAny = false;
+   for (const candidate of candidates) {
+     if (candidate.condition && !earnedSet.has(candidate.type)) {
+       await supabaseAdmin().from('badges').insert({
+@@ -35,11 +37,18 @@ export async function checkAndAwardBadges(userId: string, workspaceId: string, s
+         badge_label: candidate.label,
+         badge_description: candidate.description,
+       });
++      awardedAny = true;
+     }
+   }
++
++  if (awardedAny) {
++    await invalidate(cacheKeys.badgesList(userId));
++  }
+ }
+ 
+ export async function listBadges(userId: string) {
+-  const { data } = await supabaseAdmin().from('badges').select('*').eq('user_id', userId).order('earned_at', { ascending: false });
+-  return data ?? [];
++  return cached(cacheKeys.badgesList(userId), { ttlSeconds: CACHE_TTL.LIST_MINUTES_2 }, async () => {
++    const { data } = await supabaseAdmin().from('badges').select('*').eq('user_id', userId).order('earned_at', { ascending: false });
++    return data ?? [];
++  });
+ }
+diff --git a/backend/src/modules/coaching/coaching.routes.ts b/backend/src/modules/coaching/coaching.routes.ts
+index 05fbb93..c6925d8 100644
+--- a/backend/src/modules/coaching/coaching.routes.ts
++++ b/backend/src/modules/coaching/coaching.routes.ts
+@@ -10,6 +10,7 @@ import * as playbookService from './playbook.service';
+ import * as badgesService from './badges.service';
+ import * as curriculumService from './curriculum.service';
+ import { supabaseAdmin } from '../../config/supabase';
++import { cached, cacheKeys, CACHE_TTL } from '../../config/cache';
+ 
+ const router = Router();
+ 
+@@ -109,14 +110,24 @@ router.get(
+ router.get(
+   '/skill-trend',
+   asyncHandler(async (req, res) => {
+-    const { data } = await supabaseAdmin()
+-      .from('user_skill_trend')
+-      .select('*')
+-      .eq('user_id', req.user!.id)
+-      .eq('workspace_id', req.workspace!.id)
+-      .order('period_start', { ascending: false })
+-      .limit(12);
+-    res.json({ trend: data ?? [] });
++    // Invalidated from modules/coaching/scoring.service.ts's
++    // recomputeSkillTrendForUser() whenever a new trend snapshot is
++    // written for this user+workspace pair.
++    const trend = await cached(
++      cacheKeys.skillTrend(req.user!.id, req.workspace!.id),
++      { ttlSeconds: CACHE_TTL.LIST_MINUTES_2 },
++      async () => {
++        const { data } = await supabaseAdmin()
++          .from('user_skill_trend')
++          .select('*')
++          .eq('user_id', req.user!.id)
++          .eq('workspace_id', req.workspace!.id)
++          .order('period_start', { ascending: false })
++          .limit(12);
++        return data ?? [];
++      }
++    );
++    res.json({ trend });
+   })
+ );
+ 
+diff --git a/backend/src/modules/coaching/scoring.service.ts b/backend/src/modules/coaching/scoring.service.ts
+index cfdad7f..a7f889e 100644
+--- a/backend/src/modules/coaching/scoring.service.ts
++++ b/backend/src/modules/coaching/scoring.service.ts
+@@ -1,6 +1,7 @@
+ import { supabaseAdmin } from '../../config/supabase';
+ import { generateSkillScores } from '../ai/ai.service';
+ import { createLogger } from '../../config/logger';
++import { invalidate, cacheKeys } from '../../config/cache';
+ 
+ const log = createLogger('scoring-service');
+ 
+@@ -64,4 +65,6 @@ export async function recomputeSkillTrendForUser(userId: string, workspaceId: st
+     period_end: new Date().toISOString(),
+     sessions_count: scores.length,
+   });
++
++  await invalidate(cacheKeys.skillTrend(userId, workspaceId));
+ }
+diff --git a/backend/src/modules/practice/dashboard.routes.ts b/backend/src/modules/practice/dashboard.routes.ts
+index e96025d..bd6ed2a 100644
+--- a/backend/src/modules/practice/dashboard.routes.ts
++++ b/backend/src/modules/practice/dashboard.routes.ts
+@@ -3,43 +3,67 @@ import { asyncHandler } from '../../lib/asyncHandler';
+ import { supabaseAdmin } from '../../config/supabase';
+ import * as curriculumService from '../coaching/curriculum.service';
+ import * as workspaceService from '../workspace/workspace.service';
++import { cached, cacheKeys, CACHE_TTL } from '../../config/cache';
+ 
+ const router = Router();
+ 
++/**
++ * Cached, short TTL, no explicit invalidation hook.
++ *
++ * This aggregate is fed by several independent async writers (session
++ * completion, recomputeSkillTrend.worker, recomputeCurriculum.worker, and
++ * every workspace member's own skill-trend recompute for the team-progress
++ * branch). Wiring precise invalidation into all of those call sites would
++ * mean touching four unrelated workers for a page where a few minutes of
++ * staleness is inconsequential — a dashboard summary, not a live figure.
++ * A short TTL (5 min) is the correct tradeoff: bounds staleness tightly
++ * enough that "I just finished a session, why hasn't my dashboard updated"
++ * support load stays negligible, without coupling every score-affecting
++ * job to this route's cache key.
++ */
+ router.get(
+   '/',
+   asyncHandler(async (req, res) => {
+     const userId = req.user!.id;
+     const workspaceId = req.workspace!.id;
++    const role = req.workspace!.role;
+ 
+-    const [{ data: lastSession }, { data: trend }, curriculum, teamProgress] = await Promise.all([
+-      supabaseAdmin()
+-        .from('practice_sessions')
+-        .select('id, title, scenario_type, status, completed_at')
+-        .eq('user_id', userId)
+-        .eq('workspace_id', workspaceId)
+-        .eq('status', 'completed')
+-        .order('completed_at', { ascending: false })
+-        .limit(1)
+-        .maybeSingle(),
+-      supabaseAdmin()
+-        .from('user_skill_trend')
+-        .select('*')
+-        .eq('user_id', userId)
+-        .eq('workspace_id', workspaceId)
+-        .order('period_start', { ascending: false })
+-        .limit(1)
+-        .maybeSingle(),
+-      curriculumService.getCurrentCurriculum(userId, workspaceId),
+-      req.workspace!.role !== 'member' ? workspaceService.getAggregateTeamProgress(workspaceId) : Promise.resolve(null),
+-    ]);
++    const result = await cached(
++      cacheKeys.dashboard(workspaceId, userId),
++      { ttlSeconds: CACHE_TTL.AGGREGATE_MINUTES_5 },
++      async () => {
++        const [{ data: lastSession }, { data: trend }, curriculum, teamProgress] = await Promise.all([
++          supabaseAdmin()
++            .from('practice_sessions')
++            .select('id, title, scenario_type, status, completed_at')
++            .eq('user_id', userId)
++            .eq('workspace_id', workspaceId)
++            .eq('status', 'completed')
++            .order('completed_at', { ascending: false })
++            .limit(1)
++            .maybeSingle(),
++          supabaseAdmin()
++            .from('user_skill_trend')
++            .select('*')
++            .eq('user_id', userId)
++            .eq('workspace_id', workspaceId)
++            .order('period_start', { ascending: false })
++            .limit(1)
++            .maybeSingle(),
++          curriculumService.getCurrentCurriculum(userId, workspaceId),
++          role !== 'member' ? workspaceService.getAggregateTeamProgress(workspaceId) : Promise.resolve(null),
++        ]);
+ 
+-    res.json({
+-      last_session: lastSession ?? null,
+-      skill_trend: trend ?? null,
+-      suggested_curriculum: curriculum,
+-      team_progress: teamProgress,
+-    });
++        return {
++          last_session: lastSession ?? null,
++          skill_trend: trend ?? null,
++          suggested_curriculum: curriculum,
++          team_progress: teamProgress,
++        };
++      }
++    );
++
++    res.json(result);
+   })
+ );
+ 
+diff --git a/backend/src/modules/practice/persona.service.ts b/backend/src/modules/practice/persona.service.ts
+index f280b6b..22b510f 100644
+--- a/backend/src/modules/practice/persona.service.ts
++++ b/backend/src/modules/practice/persona.service.ts
+@@ -2,16 +2,26 @@ import { supabaseAdmin } from '../../config/supabase';
+ import { ApiError } from '../../lib/apiError';
+ import { enqueue } from '../../jobs/queues';
+ import { trackEvent } from '../analytics/analytics.service';
++import { cached, invalidateTag, cacheKeys, cacheTags, CACHE_TTL } from '../../config/cache';
+ 
++/**
++ * Cached list, tagged so any persona mutation for this workspace
++ * (createManualPersona, createPersonaFromSource, the async
++ * synthesizePersona.worker completion, updatePersona, deletePersona) can
++ * invalidate it via `invalidateTag(cacheTags.personasWorkspace(workspaceId))`
++ * without needing to know the exact cache key shape.
++ */
+ export async function listPersonas(workspaceId: string) {
+-  const { data } = await supabaseAdmin()
+-    .from('personas')
+-    .select('id, name, role, source_type, reusable, created_at')
+-    .eq('workspace_id', workspaceId)
+-    .is('deleted_at', null)
+-    .order('created_at', { ascending: false })
+-    .limit(100); // offset-acceptable at current expected scale, per architecture §2.10 note
+-  return data ?? [];
++  return cached(cacheKeys.personasList(workspaceId), { ttlSeconds: CACHE_TTL.LIST_MINUTES_2, tags: [cacheTags.personasWorkspace(workspaceId)] }, async () => {
++    const { data } = await supabaseAdmin()
++      .from('personas')
++      .select('id, name, role, source_type, reusable, created_at')
++      .eq('workspace_id', workspaceId)
++      .is('deleted_at', null)
++      .order('created_at', { ascending: false })
++      .limit(100); // offset-acceptable at current expected scale, per architecture §2.10 note
++    return data ?? [];
++  });
+ }
+ 
+ export async function createManualPersona(
+@@ -44,6 +54,7 @@ export async function createManualPersona(
+     .single();
+   if (error || !data) throw ApiError.internal('Failed to create persona.');
+ 
++  await invalidateTag(cacheTags.personasWorkspace(workspaceId));
+   await trackEvent('persona_created', { userId, workspaceId }, { sourceType: 'manual' });
+   return data;
+ }
+@@ -53,6 +64,11 @@ export async function createManualPersona(
+  * synthesizes fast enough to feel synchronous; URL/upload sources are
+  * queued and the client is notified via a Supabase Realtime channel
+  * scoped to the returned persona ID (see realtime/channels.ts).
++ *
++ * Invalidates the list cache here (the placeholder "Generating…" persona
++ * is now visible in a list read) AND again from
++ * jobs/workers/synthesizePersona.worker.ts once the real content lands —
++ * both writes are visible mutations of what listPersonas() returns.
+  */
+ export async function createPersonaFromSource(input: {
+   workspaceId: string;
+@@ -110,6 +126,7 @@ export async function createPersonaFromSource(input: {
+     });
+   }
+ 
++  await invalidateTag(cacheTags.personasWorkspace(input.workspaceId));
+   await trackEvent('persona_created', { userId: input.userId, workspaceId: input.workspaceId }, {
+     sourceType: input.sourceKind,
+   });
+@@ -138,6 +155,8 @@ export async function updatePersona(id: string, workspaceId: string, updates: Re
+     .select('*')
+     .single();
+   if (error || !data) throw ApiError.notFound('Persona not found.');
++
++  await invalidateTag(cacheTags.personasWorkspace(workspaceId));
+   return data;
+ }
+ 
+@@ -147,4 +166,6 @@ export async function deletePersona(id: string, workspaceId: string) {
+     .update({ deleted_at: new Date().toISOString() })
+     .eq('id', id)
+     .eq('workspace_id', workspaceId);
++
++  await invalidateTag(cacheTags.personasWorkspace(workspaceId));
+ }
+diff --git a/backend/src/modules/practice/session.routes.ts b/backend/src/modules/practice/session.routes.ts
+index b495063..e0b178a 100644
+--- a/backend/src/modules/practice/session.routes.ts
++++ b/backend/src/modules/practice/session.routes.ts
+@@ -11,6 +11,7 @@ import { ApiError } from '../../lib/apiError';
+ import * as sessionService from './session.service';
+ import * as debriefService from '../coaching/debrief.service';
+ import { createSessionSchema, sendMessageSchema, renameSessionSchema, listSessionsQuerySchema, attachmentsSchema } from './session.schemas';
++import { cached, cacheKeys, cacheTags, CACHE_TTL } from '../../config/cache';
+ 
+ const router = Router();
+ 
+@@ -38,21 +39,37 @@ router.get(
+   asyncHandler(async (req, res) => {
+     const { cursor, limit, archived, scenario_type, search } = req.query as unknown as z.infer<typeof listSessionsQuerySchema>;
+ 
+-    const page = await fetchCursorPage(
+-      supabaseAdmin(),
+-      'practice_sessions',
+-      (q) => {
+-        let query = q
+-          .select('id, title, scenario_type, status, archived_at, created_at, completed_at')
+-          .eq('user_id', req.user!.id)
+-          .eq('workspace_id', req.workspace!.id);
+-        query = archived ? query.not('archived_at', 'is', null) : query.is('archived_at', null);
+-        if (scenario_type) query = query.eq('scenario_type', scenario_type);
+-        if (search) query = query.textSearch('search_vector', search);
+-        return query as any;
+-      },
+-      { cursor, limit }
+-    );
++    // Cache only the common "just opened the list" shape: no cursor, no
++    // search, no scenario filter, default limit. Any filter/pagination
++    // beyond that is cheap enough uncached and combinatorially unbounded
++    // (search text especially) — not worth a cache key per filter combo.
++    const isCacheableFirstPage = !cursor && !scenario_type && !search;
++
++    const fetchPage = () =>
++      fetchCursorPage(
++        supabaseAdmin(),
++        'practice_sessions',
++        (q) => {
++          let query = q
++            .select('id, title, scenario_type, status, archived_at, created_at, completed_at')
++            .eq('user_id', req.user!.id)
++            .eq('workspace_id', req.workspace!.id);
++          query = archived ? query.not('archived_at', 'is', null) : query.is('archived_at', null);
++          if (scenario_type) query = query.eq('scenario_type', scenario_type);
++          if (search) query = query.textSearch('search_vector', search);
++          return query as any;
++        },
++        { cursor, limit }
++      );
++
++    const page = isCacheableFirstPage
++      ? await cached(
++          cacheKeys.sessionsFirstPage(req.workspace!.id, req.user!.id, !!archived),
++          { ttlSeconds: CACHE_TTL.LIST_MINUTES_2, tags: [cacheTags.sessionsUserWorkspace(req.workspace!.id, req.user!.id)] },
++          fetchPage
++        )
++      : await fetchPage();
++
+     res.json(page);
+   })
+ );
+@@ -69,7 +86,7 @@ router.patch(
+   '/:id',
+   validate({ body: renameSessionSchema }),
+   asyncHandler(async (req, res) => {
+-    const session = await sessionService.renameSession(req.params.id, req.workspace!.id, req.body.title);
++    const session = await sessionService.renameSession(req.params.id, req.workspace!.id, req.user!.id, req.body.title);
+     res.json({ session });
+   })
+ );
+@@ -77,7 +94,7 @@ router.patch(
+ router.post(
+   '/:id/archive',
+   asyncHandler(async (req, res) => {
+-    await sessionService.setArchived(req.params.id, req.workspace!.id, true);
++    await sessionService.setArchived(req.params.id, req.workspace!.id, req.user!.id, true);
+     res.json({ success: true });
+   })
+ );
+@@ -85,7 +102,7 @@ router.post(
+ router.post(
+   '/:id/unarchive',
+   asyncHandler(async (req, res) => {
+-    await sessionService.setArchived(req.params.id, req.workspace!.id, false);
++    await sessionService.setArchived(req.params.id, req.workspace!.id, req.user!.id, false);
+     res.json({ success: true });
+   })
+ );
+diff --git a/backend/src/modules/practice/session.service.ts b/backend/src/modules/practice/session.service.ts
+index 610ccbb..f5330b3 100644
+--- a/backend/src/modules/practice/session.service.ts
++++ b/backend/src/modules/practice/session.service.ts
+@@ -6,6 +6,7 @@ import { generateBuyerReply, generatePersona } from '../ai/ai.service';
+ import { runScoringConsistencyCheck } from '../ai/scoringConsistency';
+ import { enqueue } from '../../jobs/queues';
+ import { MAX_STACKED_PRESSURE_MODIFIERS } from './scenario.config';
++import { invalidateTag, invalidate, cacheKeys, cacheTags } from '../../config/cache';
+ 
+ const log = createLogger('session-service');
+ 
+@@ -158,6 +159,8 @@ export async function createSession(input: CreateSessionInput) {
+     difficulty,
+   });
+ 
++  await invalidateTag(cacheTags.sessionsUserWorkspace(input.workspaceId, input.userId));
++
+   return getSessionById(session.id, input.workspaceId);
+ }
+ 
+@@ -172,7 +175,7 @@ export async function getSessionById(sessionId: string, workspaceId: string) {
+   return data;
+ }
+ 
+-export async function renameSession(sessionId: string, workspaceId: string, title: string) {
++export async function renameSession(sessionId: string, workspaceId: string, userId: string, title: string) {
+   const { data, error } = await supabaseAdmin()
+     .from('practice_sessions')
+     .update({ title })
+@@ -181,15 +184,25 @@ export async function renameSession(sessionId: string, workspaceId: string, titl
+     .select('id, title')
+     .single();
+   if (error || !data) throw ApiError.notFound('Session not found.');
++
++  await invalidateTag(cacheTags.sessionsUserWorkspace(workspaceId, userId));
+   return data;
+ }
+ 
+-export async function setArchived(sessionId: string, workspaceId: string, archived: boolean) {
++/**
++ * Archiving/unarchiving moves a session between the active and archived
++ * cached list buckets — both must be invalidated, not just the bucket
++ * being transitioned into, since the session also disappears from the
++ * other bucket's cached page.
++ */
++export async function setArchived(sessionId: string, workspaceId: string, userId: string, archived: boolean) {
+   await supabaseAdmin()
+     .from('practice_sessions')
+     .update({ archived_at: archived ? new Date().toISOString() : null })
+     .eq('id', sessionId)
+     .eq('workspace_id', workspaceId);
++
++  await invalidateTag(cacheTags.sessionsUserWorkspace(workspaceId, userId));
+ }
+ 
+ export async function deleteSession(sessionId: string, workspaceId: string, userId: string) {
+@@ -199,6 +212,7 @@ export async function deleteSession(sessionId: string, workspaceId: string, user
+     throw ApiError.conflict('Completed sessions cannot be deleted — they are used for skill tracking.');
+   }
+   await supabaseAdmin().from('practice_sessions').delete().eq('id', sessionId);
++  await invalidateTag(cacheTags.sessionsUserWorkspace(workspaceId, userId));
+ }
+ 
+ /**
+@@ -405,6 +419,15 @@ export async function endSession(sessionId: string, workspaceId: string, userId:
+   await enqueue('ai-derivative', 'score_session_skills', { sessionId, workspaceId });
+ 
+   await trackEvent('session_completed', { userId, workspaceId, sessionId }, {});
++
++  // dashboard.last_session reads the most recently completed session
++  // directly — this write invalidates it immediately rather than waiting
++  // out the dashboard's 5-minute TTL, since "I just finished practicing,
++  // why does my dashboard still show the old session" is a much more
++  // noticeable gap than the general dashboard staleness window.
++  await invalidateTag(cacheTags.sessionsUserWorkspace(workspaceId, userId));
++  await invalidate(cacheKeys.dashboard(workspaceId, userId));
++
+   return { already_completed: false };
+ }
+ 

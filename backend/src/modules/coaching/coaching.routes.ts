@@ -10,6 +10,7 @@ import * as playbookService from './playbook.service';
 import * as badgesService from './badges.service';
 import * as curriculumService from './curriculum.service';
 import { supabaseAdmin } from '../../config/supabase';
+import { cached, cacheKeys, CACHE_TTL } from '../../config/cache';
 
 const router = Router();
 
@@ -109,14 +110,24 @@ router.get(
 router.get(
   '/skill-trend',
   asyncHandler(async (req, res) => {
-    const { data } = await supabaseAdmin()
-      .from('user_skill_trend')
-      .select('*')
-      .eq('user_id', req.user!.id)
-      .eq('workspace_id', req.workspace!.id)
-      .order('period_start', { ascending: false })
-      .limit(12);
-    res.json({ trend: data ?? [] });
+    // Invalidated from modules/coaching/scoring.service.ts's
+    // recomputeSkillTrendForUser() whenever a new trend snapshot is
+    // written for this user+workspace pair.
+    const trend = await cached(
+      cacheKeys.skillTrend(req.user!.id, req.workspace!.id),
+      { ttlSeconds: CACHE_TTL.LIST_MINUTES_2 },
+      async () => {
+        const { data } = await supabaseAdmin()
+          .from('user_skill_trend')
+          .select('*')
+          .eq('user_id', req.user!.id)
+          .eq('workspace_id', req.workspace!.id)
+          .order('period_start', { ascending: false })
+          .limit(12);
+        return data ?? [];
+      }
+    );
+    res.json({ trend });
   })
 );
 

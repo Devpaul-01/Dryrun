@@ -11,6 +11,7 @@ import { ApiError } from '../../lib/apiError';
 import * as sessionService from './session.service';
 import * as debriefService from '../coaching/debrief.service';
 import { createSessionSchema, sendMessageSchema, renameSessionSchema, listSessionsQuerySchema, attachmentsSchema } from './session.schemas';
+import { cached, cacheKeys, cacheTags, CACHE_TTL } from '../../config/cache';
 
 const router = Router();
 
@@ -38,21 +39,37 @@ router.get(
   asyncHandler(async (req, res) => {
     const { cursor, limit, archived, scenario_type, search } = req.query as unknown as z.infer<typeof listSessionsQuerySchema>;
 
-    const page = await fetchCursorPage(
-      supabaseAdmin(),
-      'practice_sessions',
-      (q) => {
-        let query = q
-          .select('id, title, scenario_type, status, archived_at, created_at, completed_at')
-          .eq('user_id', req.user!.id)
-          .eq('workspace_id', req.workspace!.id);
-        query = archived ? query.not('archived_at', 'is', null) : query.is('archived_at', null);
-        if (scenario_type) query = query.eq('scenario_type', scenario_type);
-        if (search) query = query.textSearch('search_vector', search);
-        return query as any;
-      },
-      { cursor, limit }
-    );
+    // Cache only the common "just opened the list" shape: no cursor, no
+    // search, no scenario filter, default limit. Any filter/pagination
+    // beyond that is cheap enough uncached and combinatorially unbounded
+    // (search text especially) — not worth a cache key per filter combo.
+    const isCacheableFirstPage = !cursor && !scenario_type && !search;
+
+    const fetchPage = () =>
+      fetchCursorPage(
+        supabaseAdmin(),
+        'practice_sessions',
+        (q) => {
+          let query = q
+            .select('id, title, scenario_type, status, archived_at, created_at, completed_at')
+            .eq('user_id', req.user!.id)
+            .eq('workspace_id', req.workspace!.id);
+          query = archived ? query.not('archived_at', 'is', null) : query.is('archived_at', null);
+          if (scenario_type) query = query.eq('scenario_type', scenario_type);
+          if (search) query = query.textSearch('search_vector', search);
+          return query as any;
+        },
+        { cursor, limit }
+      );
+
+    const page = isCacheableFirstPage
+      ? await cached(
+          cacheKeys.sessionsFirstPage(req.workspace!.id, req.user!.id, !!archived),
+          { ttlSeconds: CACHE_TTL.LIST_MINUTES_2, tags: [cacheTags.sessionsUserWorkspace(req.workspace!.id, req.user!.id)] },
+          fetchPage
+        )
+      : await fetchPage();
+
     res.json(page);
   })
 );
@@ -69,7 +86,7 @@ router.patch(
   '/:id',
   validate({ body: renameSessionSchema }),
   asyncHandler(async (req, res) => {
-    const session = await sessionService.renameSession(req.params.id, req.workspace!.id, req.body.title);
+    const session = await sessionService.renameSession(req.params.id, req.workspace!.id, req.user!.id, req.body.title);
     res.json({ session });
   })
 );
@@ -77,7 +94,7 @@ router.patch(
 router.post(
   '/:id/archive',
   asyncHandler(async (req, res) => {
-    await sessionService.setArchived(req.params.id, req.workspace!.id, true);
+    await sessionService.setArchived(req.params.id, req.workspace!.id, req.user!.id, true);
     res.json({ success: true });
   })
 );
@@ -85,7 +102,7 @@ router.post(
 router.post(
   '/:id/unarchive',
   asyncHandler(async (req, res) => {
-    await sessionService.setArchived(req.params.id, req.workspace!.id, false);
+    await sessionService.setArchived(req.params.id, req.workspace!.id, req.user!.id, false);
     res.json({ success: true });
   })
 );
