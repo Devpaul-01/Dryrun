@@ -54,7 +54,7 @@ router.post(
       url: req.body.url,
       uploadId: req.body.upload_id,
     });
-    res.status(202).json({ persona, message: 'Persona is being generated — subscribe to the realtime channel for status.' });
+    res.status(202).json({ persona, message: 'Persona is being generated please wait a moment ' });
   })
 );
 
