@@ -44,6 +44,11 @@ export const env = {
     serviceRoleKey: () => required('SUPABASE_SERVICE_ROLE_KEY'),
     anonKey: optional('SUPABASE_ANON_KEY'),
     jwtSecret: optional('SUPABASE_JWT_SECRET'),
+    // Auth > Hooks > Send Email secret from the Supabase dashboard —
+    // format "v1,whsec_<base64>". Used to verify that POST
+    // /api/v1/auth/email-hook requests genuinely originate from Supabase
+    // (see modules/auth/emailHook.service.ts).
+    sendEmailHookSecret: optional('SUPABASE_SEND_EMAIL_HOOK_SECRET'),
   },
 
   redisUrl: () => required('REDIS_URL'),
