@@ -414,7 +414,14 @@ create table session_skill_scores (
 
 create table session_retries (
   retry_session_id    uuid primary key references practice_sessions(id) on delete cascade,
-  comparison          jsonb not null default '{}'::jsonb, -- [INFERRED shape] session.routes.ts only reads `.comparison`, never writes it in the provided files — flagging as a gap: no writer found for this table.
+  -- Written by scoring.service.ts's computeSessionComparison(), triggered
+  -- both automatically (scoreSessionSkills.worker.ts, right after a retry
+  -- session's own scoring completes) and on-demand (GET /:id/comparison,
+  -- as a fallback if the background path hasn't run yet). Shape:
+  -- { original_scores, retry_scores, deltas, original_goal_achieved,
+  --   retry_goal_achieved, summary } — see SessionComparisonPayload in
+  -- scoring.service.ts for the exact TypeScript type.
+  comparison          jsonb not null default '{}'::jsonb,
   created_at          timestamptz not null default now()
 );
 
@@ -609,7 +616,7 @@ create table analytics_events (
   id              uuid primary key default gen_random_uuid(),
   user_id         uuid references users(id) on delete set null,
   workspace_id    uuid references workspaces(id) on delete set null,
-  session_id      uuid references practice_sessions(id) on delete set null, -- text-typed in analytics.routes.ts input (uuid()) but also accepts synthetic demo-session ids from trackEvent call sites elsewhere — see note below
+  session_id      uuid references practice_sessions(id) on delete set null,
   event_name      text not null,
   properties      jsonb not null default '{}'::jsonb,
   occurred_at     timestamptz not null default now()
@@ -617,12 +624,6 @@ create table analytics_events (
 
 create index idx_analytics_events_workspace_occurred on analytics_events (workspace_id, occurred_at desc);
 create index idx_analytics_events_name_occurred on analytics_events (event_name, occurred_at desc);
-
--- NOTE: several trackEvent(...) call sites pass sessionId values like
--- `demo-${uuid}` (demo.service.ts) which are NOT valid uuids. Since this
--- column is typed uuid with an FK, those calls would fail against a real
--- Postgres constraint today. Flagging as a pre-existing bug this schema
--- surfaces rather than papers over — see Stage-1 write-up for the fix options.
 
 -- =============================================================================
 -- Auth token tables — RETIRED as of the Supabase-native email migration

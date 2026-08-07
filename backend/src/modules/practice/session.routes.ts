@@ -10,6 +10,7 @@ import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
 import * as sessionService from './session.service';
 import * as debriefService from '../coaching/debrief.service';
+import * as scoringService from '../coaching/scoring.service';
 import { createSessionSchema, sendMessageSchema, renameSessionSchema, listSessionsQuerySchema, messagesQuerySchema, attachmentsSchema } from './session.schemas';
 import { cached, cacheKeys, cacheTags, CACHE_TTL } from '../../config/cache';
 import { fetchMessagesPage } from '../../lib/messagesPagination';
@@ -253,12 +254,25 @@ router.get(
     if (!retrySession.retry_of_session_id) {
       throw ApiError.badRequest('This session is not a retry of another session.');
     }
-    const { data: comparison } = await supabaseAdmin()
+
+    const { data: stored } = await supabaseAdmin()
       .from('session_retries')
       .select('comparison')
       .eq('retry_session_id', req.params.id)
       .maybeSingle();
-    res.json({ comparison: comparison?.comparison ?? null });
+
+    if (stored?.comparison) {
+      res.json({ comparison: stored.comparison });
+      return;
+    }
+
+    // Nothing computed yet — usually because scoreSessionSkills.worker.ts's
+    // background trigger hasn't run yet (async scoring job still in
+    // flight). Compute it now rather than returning null; returns null
+    // itself only if the underlying scores genuinely aren't ready yet on
+    // EITHER session, which the client can interpret as "check back soon."
+    const computed = await scoringService.computeSessionComparison(req.params.id, req.workspace!.id);
+    res.json({ comparison: computed });
   })
 );
 

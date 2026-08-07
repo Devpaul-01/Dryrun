@@ -151,7 +151,7 @@ async function recordUsage(
  * provider — architecture doc §10.1).
  */
 export async function callWithFallback(
-  callType: 'live_turn' | 'persona_synthesis' | 'debrief' | 'scoring' | 'playbook' | 'consistency_check',
+  callType: 'live_turn' | 'persona_synthesis' | 'debrief' | 'scoring' | 'playbook' | 'consistency_check' | 'session_comparison',
   workspaceId: string,
   options: ProviderCallOptions
 ): Promise<ProviderCallResult> {
