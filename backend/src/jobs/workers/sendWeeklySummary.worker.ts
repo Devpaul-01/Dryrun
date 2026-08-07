@@ -33,20 +33,16 @@ interface WeeklySummaryData {
  * place, so the email-building step below stays pure formatting logic
  * with no query concerns mixed in.
  *
- * NOTE on goal completion: session_goals.goal_achieved is read here (and
- * by coaching.routes.ts's existing goal-achievement-rate endpoint) but —
- * confirmed during the initial schema pass — has NO WRITER anywhere in
- * this codebase; every row's value is whatever it defaults to (null/
- * false), never set true by any actual scoring/debrief step. Rather than
- * silently report "0% goals achieved" (which reads as a real, discouraging
- * metric rather than the true state of "this feature isn't wired up
- * yet"), this returns `null` for goalsAchievedThisWeek when nothing in
- * the underlying data suggests the field is actually being populated, and
- * the email template below omits that section entirely rather than
- * render a misleading 0%. This is a pre-existing gap surfaced again here,
- * not something this change fixes — flagging clearly since a coaching
- * feature silently reporting fabricated-looking numbers would be worse
- * than a shorter email.
+ * NOTE on goal completion: session_goals.goal_achieved is now written by
+ * session.service.ts's sendMessage() — the AI judges achievement
+ * directly on each turn (see promptBuilder.ts's per-goal-type criteria),
+ * and the backend locks in a true value permanently once reached. This
+ * function previously worked around goal_achieved having no writer at
+ * all by hiding the achievement count whenever nothing in the batch
+ * showed true, since a real "0 achieved" was indistinguishable from "not
+ * tracked yet." That workaround is removed now that the field is
+ * genuinely populated — goalsAchievedThisWeek below reports the real
+ * count, including a genuine zero, whenever at least one goal was set.
  */
 async function gatherWeeklySummaryData(userId: string, workspaceId: string): Promise<WeeklySummaryData> {
   const now = new Date();
@@ -141,10 +137,7 @@ async function gatherWeeklySummaryData(userId: string, workspaceId: string): Pro
   // as "not actually tracked" rather than "0 achieved" when there ARE
   // goals set but the achieved flag never differs from its default.
   const goalsSetThisWeek = goalsThisWeek?.length ?? 0;
-  const anyGoalMarkedAchieved = (goalsThisWeek ?? []).some((g) => g.goal_achieved === true);
-  const goalsAchievedThisWeek = goalsSetThisWeek > 0 && anyGoalMarkedAchieved
-    ? (goalsThisWeek ?? []).filter((g) => g.goal_achieved).length
-    : null;
+  const goalsAchievedThisWeek = goalsSetThisWeek > 0 ? (goalsThisWeek ?? []).filter((g) => g.goal_achieved === true).length : null;
 
   return {
     sessionsThisWeek,
@@ -187,10 +180,9 @@ function buildWeeklySummaryEmailHtml(data: WeeklySummaryData): string {
     sections.push(`<p>${parts.join(', and ')}.</p>`);
   }
 
-  // Goal completion section is omitted entirely (not shown as 0%) when
-  // the underlying data can't distinguish "no goals achieved" from
-  // "this field isn't populated yet" — see gatherWeeklySummaryData's
-  // header comment.
+  // goalsAchievedThisWeek is null only when zero goals were set this week
+  // (see gatherWeeklySummaryData) — this guard just skips an empty
+  // "0 of 0 goals" line, not a data-quality workaround.
   if (data.goalsSetThisWeek > 0 && data.goalsAchievedThisWeek !== null) {
     sections.push(
       `<p>You set <strong>${data.goalsSetThisWeek}</strong> session goal${data.goalsSetThisWeek === 1 ? '' : 's'} this week and achieved <strong>${data.goalsAchievedThisWeek}</strong> of them.</p>`

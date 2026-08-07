@@ -264,7 +264,7 @@ export async function sendMessage(input: {
 
   const { data: goalRow } = await supabaseAdmin()
     .from('session_goals')
-    .select('goal_type, custom_text')
+    .select('goal_type, custom_text, goal_achieved')
     .eq('session_id', input.sessionId)
     .maybeSingle();
 
@@ -382,11 +382,28 @@ export async function sendMessage(input: {
     .update({ accepted_delta: response.state_delta })
     .eq('id', evaluationId);
 
-  if (response.goal_progress != null && goalRow) {
-    await supabaseAdmin()
-      .from('session_goals')
-      .update({ goal_progress: response.goal_progress })
-      .eq('session_id', input.sessionId);
+  // GOAL ACHIEVEMENT: unlike natural_ending (a soft signal the client
+  // decides whether to act on via /:id/continue or /:id/end), a goal
+  // being achieved ends the session directly — this is a deliberate
+  // product decision, not an oversight: "you got what you came for" is a
+  // hard stop, not an advisory. The sticky-lock check (goalRow?.goal_achieved
+  // already true) means this only fires once per session even though the
+  // model is asked to keep reporting achieved:true on every subsequent
+  // turn — the backend enforces that guarantee itself rather than trusting
+  // model compliance alone, matching how state_delta's range validation
+  // exists precisely because the model can't be fully trusted to self-police.
+  let justAchievedGoal = false;
+  if (goalRow && response.goal_achieved && !goalRow.goal_achieved) {
+    if (response.goal_achieved.achieved) {
+      await supabaseAdmin()
+        .from('session_goals')
+        .update({ goal_achieved: true })
+        .eq('session_id', input.sessionId);
+      justAchievedGoal = true;
+    }
+    // response.goal_achieved.achieved === false is NOT written anywhere —
+    // goal_achieved has no "explicitly not yet" state distinct from its
+    // default; only a transition to true is ever recorded.
   }
 
   await trackEvent('session_message_sent', { userId: input.userId, workspaceId: input.workspaceId, sessionId: input.sessionId }, {});
@@ -413,6 +430,15 @@ export async function sendMessage(input: {
     });
   }
 
+  // Reuses endSession's exact side effects (debrief/scoring enqueue,
+  // cache invalidation, status/completed_at write) rather than
+  // duplicating any of that logic — this call happens after the buyer's
+  // final reply and state snapshot are already recorded above, so the
+  // debrief/scoring jobs see the complete final turn.
+  if (justAchievedGoal) {
+    await endSession(input.sessionId, input.workspaceId, input.userId);
+  }
+
   return {
     message_ids: [userMsg.id, buyerMsg?.id].filter(Boolean),
     reply: response.reply,
@@ -425,6 +451,7 @@ export async function sendMessage(input: {
       momentum,
     },
     natural_ending: response.natural_ending ?? null,
+    goal_achieved: justAchievedGoal,
   };
 }
 

@@ -25,7 +25,7 @@ export async function runDebriefGeneration(sessionId: string, workspaceId: strin
   const transcript = await buildTranscript(sessionId);
   const { data: goal } = await supabaseAdmin()
     .from('session_goals')
-    .select('goal_type, custom_text, goal_progress')
+    .select('goal_type, custom_text, goal_achieved')
     .eq('session_id', sessionId)
     .maybeSingle();
 
@@ -115,7 +115,7 @@ export interface SessionExportPayload {
     completed_at: string | null;
   };
   persona: Record<string, unknown> | null;
-  goal: { goal_type: string; custom_text: string | null; goal_progress: number | null } | null;
+  goal: { goal_type: string; custom_text: string | null; goal_achieved: boolean | null } | null;
   messages: { role: string; content: string; sequence_index: number; created_at: string }[];
   debrief: { strength: string; improvement: string; coachable_moment: string; goal_reference: string | null } | null;
   skill_scores: Record<string, number | string> | null;
@@ -162,7 +162,7 @@ export async function exportSessionData(
       .order('sequence_index', { ascending: true }),
     supabaseAdmin()
       .from('session_goals')
-      .select('goal_type, custom_text, goal_progress')
+      .select('goal_type, custom_text, goal_achieved')
       .eq('session_id', sessionId)
       .maybeSingle(),
     supabaseAdmin()
@@ -214,7 +214,7 @@ export function renderSessionExportAsText(payload: SessionExportPayload): string
 
   if (payload.goal) {
     lines.push(`Goal: ${payload.goal.goal_type}${payload.goal.custom_text ? ` — "${payload.goal.custom_text}"` : ''}`);
-    if (payload.goal.goal_progress != null) lines.push(`Goal progress: ${payload.goal.goal_progress}%`);
+    if (payload.goal.goal_achieved != null) lines.push(`Goal achieved: ${payload.goal.goal_achieved ? 'Yes' : 'No'}`);
     lines.push('');
   }
 

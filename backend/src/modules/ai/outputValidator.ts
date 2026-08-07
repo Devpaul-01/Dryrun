@@ -23,7 +23,13 @@ export const liveTurnResponseSchema = z.object({
   }),
   buying_intent_score: z.number().min(0).max(100),
   objection_likelihood_score: z.number().min(0).max(100),
-  goal_progress: z.number().min(0).max(100).nullable().optional(),
+  goal_achieved: z
+    .object({
+      achieved: z.boolean(),
+      reasoning: z.string().min(1, 'reasoning is mandatory whenever a goal was set — explains why this turn does or does not count as achieving it'),
+    })
+    .nullable()
+    .optional(),
   natural_ending: z
     .object({ type: z.string(), reason: z.string() })
     .nullable()
