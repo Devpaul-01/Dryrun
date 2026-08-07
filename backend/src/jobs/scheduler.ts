@@ -1,7 +1,6 @@
 import { getQueue } from './queues';
 import { createLogger } from '../config/logger';
 import { supabaseAdmin } from '../config/supabase';
-import { redisConnection } from '../config/redis';
 
 const log = createLogger('scheduler');
 
@@ -21,47 +20,38 @@ const SCHEDULES: ScheduleEntry[] = [
   { queue: 'maintenance', jobName: 'dispatch_weekly_summaries', cron: '0 18 * * 0' }, // weekly Sunday 6pm
 ];
 
-const REGISTRATION_LOCK_KEY = 'scheduler:registration-lock';
-const REGISTRATION_LOCK_TTL_MS = 60 * 1000; // generous relative to how long registering 6 schedules actually takes
-
 /**
- * Idempotent registration, run once on worker-process startup. Wipes and
- * re-registers repeatable jobs each boot, mirroring the pattern used
- * elsewhere in this product's job infrastructure for predictable, verified
- * schedule state rather than accumulating duplicate repeatable definitions
- * across restarts.
+ * Idempotent registration, run once on worker-process startup.
  *
- * DISTRIBUTED LOCK (added during the horizontal-scalability review): the
- * read-existing -> delete -> re-add sequence below is not safe if more
- * than one process runs it concurrently at boot — two worker replicas (or
- * two combined-mode replicas, now that start-all.ts exists) starting at
- * the same time could both read the same existing repeatable-job list,
- * both attempt to remove it, and both add a fresh one, risking either a
- * transient duplicate or a brief gap depending on exact timing. A simple
- * `SET NX PX` lock (the same primitive already used correctly elsewhere
- * in this codebase — see attemptRenewalCharge.worker.ts,
- * purgeSoftDeletedAccounts.worker.ts) ensures only one process actually
- * performs registration per boot cycle; every other process that starts
- * around the same time simply skips it, relying on whichever instance won
- * the lock to have left the schedules correctly registered. This is safe
- * to skip (not queue-and-wait) because registration is a one-time boot
- * action, not a per-request operation another process is blocked on.
+ * MIGRATION NOTE (replaces the previous getRepeatableJobs/
+ * removeRepeatableByKey/add sequence and its accompanying manual Redis
+ * lock): that trio is BullMQ's now-deprecated repeatable-jobs API
+ * (explicit `@deprecated` JSDoc in bullmq, "will be removed in v6").
+ * Beyond just being deprecated, it had a real correctness gap — the
+ * read-existing -> delete -> re-add sequence wasn't atomic, so two
+ * processes booting at the same time (two worker replicas, or two
+ * combined-mode replicas via start-all.ts) could race each other,
+ * which is why a manual SET NX PX lock was added around it during the
+ * horizontal-scalability review.
+ *
+ * `upsertJobScheduler(id, repeatOpts, template)` replaces all of that in
+ * one call: BullMQ implements it as a single server-side Lua script
+ * (addJobScheduler), so "does a scheduler with this ID already exist,
+ * and if so update it in place; otherwise create it" happens as one
+ * atomic Redis operation — the same atomicity guarantee the manual lock
+ * was approximating from the client side, now provided natively by the
+ * library for exactly this operation. The manual lock is removed
+ * entirely here, not just relocated, since it's no longer solving a
+ * problem that still exists.
+ *
+ * Each schedule's `jobName` is used directly as its jobSchedulerId — it
+ * was already the unique key the old code filtered existing repeatable
+ * jobs by, so reusing it here needs no new identifier scheme.
  */
 export async function registerSchedules(): Promise<void> {
-  const redis = redisConnection();
-  const acquired = await redis.set(REGISTRATION_LOCK_KEY, '1', 'PX', REGISTRATION_LOCK_TTL_MS, 'NX');
-  if (!acquired) {
-    log.info('Another process is already registering schedules — skipping (schedules are process-boot-idempotent).');
-    return;
-  }
-
   for (const entry of SCHEDULES) {
     const queue = getQueue(entry.queue);
-    const existing = await queue.getRepeatableJobs();
-    for (const job of existing.filter((j) => j.name === entry.jobName)) {
-      await queue.removeRepeatableByKey(job.key);
-    }
-    await queue.add(entry.jobName, entry.data ?? {}, { repeat: { pattern: entry.cron } });
+    await queue.upsertJobScheduler(entry.jobName, { pattern: entry.cron }, { name: entry.jobName, data: entry.data ?? {} });
     log.info({ jobName: entry.jobName, cron: entry.cron }, 'Registered schedule');
   }
 }
