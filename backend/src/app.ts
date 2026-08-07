@@ -105,7 +105,14 @@ app.use('/api/v1/notifications', ...authed, notificationsRoutes);
 app.use('/api/v1/analytics', ...authed, analyticsRoutes);
 
 // Admin -- authenticated + admin-role-gated + optional IP allowlist.
-app.use('/api/v1/admin', authenticate, resolveWorkspace, requireAdmin, adminRoutes);
+// Deliberately does NOT include resolveWorkspace: admin.routes.ts never
+// reads req.workspace (every route either operates globally or takes an
+// explicit :id param for whichever workspace it's targeting), and
+// resolveWorkspace would incorrectly block a genuine admin who isn't
+// currently a member of any workspace themselves (a support/ops-only
+// account) from every admin action, purely because they have no
+// resolvable workspace context of their own.
+app.use('/api/v1/admin', authenticate, requireAdmin, adminRoutes);
 
 app.use('*', (req, res) => {
   res.status(404).json({ error: 'NOT_FOUND', message: `${req.method} ${req.originalUrl} not found` });

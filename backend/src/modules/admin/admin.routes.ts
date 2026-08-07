@@ -7,6 +7,7 @@ import { setConfig } from '../../config/systemConfig';
 import { getQueue, retryJob, getAllQueueDepths, QueueName } from '../../jobs/queues';
 import { fetchDeadLetterPage } from '../../jobs/deadLetterPagination';
 import { adminActionRateLimit } from '../../middleware/rateLimit';
+import { ApiError } from '../../lib/apiError';
 
 const router = Router();
 
@@ -88,7 +89,8 @@ router.patch(
 router.get(
   '/workspaces/:id',
   asyncHandler(async (req, res) => {
-    const { data } = await supabaseAdmin().from('workspaces').select('*, subscriptions(*)').eq('id', req.params.id).single();
+    const { data, error } = await supabaseAdmin().from('workspaces').select('*, subscriptions(*)').eq('id', req.params.id).single();
+    if (error || !data) throw ApiError.notFound('Workspace not found.');
     res.json({ workspace: data });
   })
 );

@@ -83,5 +83,8 @@ export async function getAllQueueDepths(): Promise<Record<string, { waiting: num
 export async function retryJob(queueName: string, jobId: string): Promise<void> {
   const queue = getQueue(queueName as QueueName);
   const job = await queue.getJob(jobId);
-  if (job) await job.retry();
+  if (!job) {
+    throw new Error(`Job ${jobId} not found in queue ${queueName}`);
+  }
+  await job.retry();
 }

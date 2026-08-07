@@ -56,16 +56,23 @@ export async function createSignedUploadUrl(input: {
 }
 
 /**
- * Server-side re-validation on finalize — never trusts client-reported
- * metadata (architecture doc §19.8). Fetches the actual stored object's
- * headers to confirm real size/type before enqueuing the AV scan.
+ * SECURITY FIX: completeUpload, getUpload, and deleteUpload below used to
+ * be scoped by workspace_id only — any workspace member could complete,
+ * view, or (most consequentially) permanently delete any other member's
+ * uploaded file by ID. Unlike personas (deliberately reusable/shared
+ * across a workspace, per personas.reusable), an upload is an individual
+ * attachment a specific user is adding to their own persona-source or
+ * session — session_message_attachments ties it to a session that is
+ * itself user-owned (see session.service.ts's authorization fixes). All
+ * three functions now also require userId to match uploads.user_id.
  */
-export async function completeUpload(uploadId: string, workspaceId: string) {
+export async function completeUpload(uploadId: string, workspaceId: string, userId: string) {
   const { data: upload, error } = await supabaseAdmin()
     .from('uploads')
     .select('*')
     .eq('id', uploadId)
     .eq('workspace_id', workspaceId)
+    .eq('user_id', userId)
     .single();
   if (error || !upload) throw ApiError.notFound('Upload not found.');
 
@@ -80,28 +87,31 @@ export async function completeUpload(uploadId: string, workspaceId: string) {
   return { upload_id: uploadId, status: 'processing' };
 }
 
-export async function getUpload(uploadId: string, workspaceId: string) {
+export async function getUpload(uploadId: string, workspaceId: string, userId: string) {
   const { data, error } = await supabaseAdmin()
     .from('uploads')
     .select('id, status, av_scan_status, original_filename, purpose')
     .eq('id', uploadId)
     .eq('workspace_id', workspaceId)
+    .eq('user_id', userId)
     .single();
   if (error || !data) throw ApiError.notFound('Upload not found.');
   return data;
 }
 
-export async function deleteUpload(uploadId: string, workspaceId: string) {
+export async function deleteUpload(uploadId: string, workspaceId: string, userId: string) {
   const { data: upload } = await supabaseAdmin()
     .from('uploads')
     .select('storage_path')
     .eq('id', uploadId)
     .eq('workspace_id', workspaceId)
-    .single();
-  if (upload) {
-    await supabaseAdmin().storage.from(STORAGE_BUCKET).remove([upload.storage_path]);
-  }
-  await supabaseAdmin().from('uploads').delete().eq('id', uploadId).eq('workspace_id', workspaceId);
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (!upload) throw ApiError.notFound('Upload not found.');
+
+  await supabaseAdmin().storage.from(STORAGE_BUCKET).remove([upload.storage_path]);
+  await supabaseAdmin().from('uploads').delete().eq('id', uploadId).eq('workspace_id', workspaceId).eq('user_id', userId);
 }
 
 export { STORAGE_BUCKET, MAX_SIZE_BYTES, ALLOWED_MIME_TYPES };
