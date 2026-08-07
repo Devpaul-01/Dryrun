@@ -161,10 +161,25 @@ export async function createSession(input: CreateSessionInput) {
 
   await invalidateTag(cacheTags.sessionsUserWorkspace(input.workspaceId, input.userId));
 
-  return getSessionById(session.id, input.workspaceId);
+  return getSessionById(session.id, input.workspaceId, input.userId);
 }
 
-export async function getSessionById(sessionId: string, workspaceId: string) {
+/**
+ * SECURITY FIX: this used to be scoped by workspace_id alone, meaning any
+ * member of a workspace could fetch, rename, archive, view messages of,
+ * or attach files to ANY other member's session by ID — every one of
+ * this function's 10 call sites already had the calling user's ID
+ * available and simply never passed it through for an ownership check.
+ * deleteSession() was the one exception, already doing this check
+ * itself inline; this fix moves that same check into the shared
+ * function so every caller gets it for free, matching the product's
+ * actual privacy model already established elsewhere (see
+ * workspace.service.ts's getAggregateTeamProgress, which is deliberately
+ * backed by a separate query path specifically so it can NEVER select
+ * raw session content — individual sessions are owner-private, only
+ * aggregate stats are workspace-visible to non-member roles).
+ */
+export async function getSessionById(sessionId: string, workspaceId: string, requestingUserId: string) {
   const { data, error } = await supabaseAdmin()
     .from('practice_sessions')
     .select('*')
@@ -172,6 +187,13 @@ export async function getSessionById(sessionId: string, workspaceId: string) {
     .eq('workspace_id', workspaceId)
     .single();
   if (error || !data) throw ApiError.notFound('Session not found.');
+  if (data.user_id !== requestingUserId) {
+    // 403, not 404 — matches this codebase's existing convention for the
+    // same situation (deleteSession's inline check below, and
+    // debrief.service.ts's getReplay), rather than introducing a
+    // competing not-found-to-avoid-enumeration pattern of its own.
+    throw ApiError.forbidden('You can only access your own sessions.');
+  }
   return data;
 }
 
@@ -181,6 +203,7 @@ export async function renameSession(sessionId: string, workspaceId: string, user
     .update({ title })
     .eq('id', sessionId)
     .eq('workspace_id', workspaceId)
+    .eq('user_id', userId)
     .select('id, title')
     .single();
   if (error || !data) throw ApiError.notFound('Session not found.');
@@ -196,17 +219,25 @@ export async function renameSession(sessionId: string, workspaceId: string, user
  * other bucket's cached page.
  */
 export async function setArchived(sessionId: string, workspaceId: string, userId: string, archived: boolean) {
-  await supabaseAdmin()
+  const { data, error } = await supabaseAdmin()
     .from('practice_sessions')
     .update({ archived_at: archived ? new Date().toISOString() : null })
     .eq('id', sessionId)
-    .eq('workspace_id', workspaceId);
+    .eq('workspace_id', workspaceId)
+    .eq('user_id', userId)
+    .select('id')
+    .maybeSingle();
+  if (error || !data) throw ApiError.notFound('Session not found.');
 
   await invalidateTag(cacheTags.sessionsUserWorkspace(workspaceId, userId));
 }
 
 export async function deleteSession(sessionId: string, workspaceId: string, userId: string) {
-  const session = await getSessionById(sessionId, workspaceId);
+  const session = await getSessionById(sessionId, workspaceId, userId);
+  // getSessionById now enforces ownership itself; this check is kept as
+  // defense-in-depth rather than removed, so a future change to that
+  // shared function can't silently regress this specific caller's
+  // guarantee without a second, independent line also needing to change.
   if (session.user_id !== userId) throw ApiError.forbidden();
   if (!['pending', 'active'].includes(session.status)) {
     throw ApiError.conflict('Completed sessions cannot be deleted — they are used for skill tracking.');
@@ -226,7 +257,7 @@ export async function sendMessage(input: {
   content: string;
   attachmentUploadIds: string[];
 }) {
-  const session = await getSessionById(input.sessionId, input.workspaceId);
+  const session = await getSessionById(input.sessionId, input.workspaceId, input.userId);
   if (session.status !== 'active') {
     throw ApiError.conflict('This session has already ended.');
   }
@@ -399,13 +430,13 @@ export async function sendMessage(input: {
 
 /** User accepts continuing past a signaled natural ending — never auto-ended silently. */
 export async function continueSession(sessionId: string, workspaceId: string, userId: string) {
-  await getSessionById(sessionId, workspaceId);
+  await getSessionById(sessionId, workspaceId, userId);
   await trackEvent('session_continued_past_ending', { userId, workspaceId, sessionId }, {});
   return { extra_exchanges_allowed: NATURAL_ENDING_EXTRA_EXCHANGES };
 }
 
 export async function endSession(sessionId: string, workspaceId: string, userId: string) {
-  const session = await getSessionById(sessionId, workspaceId);
+  const session = await getSessionById(sessionId, workspaceId, userId);
   if (session.status === 'completed') {
     return { already_completed: true };
   }
@@ -432,7 +463,7 @@ export async function endSession(sessionId: string, workspaceId: string, userId:
 }
 
 export async function retrySession(sessionId: string, workspaceId: string, userId: string) {
-  const original = await getSessionById(sessionId, workspaceId);
+  const original = await getSessionById(sessionId, workspaceId, userId);
   if (original.status !== 'completed') throw ApiError.badRequest('Original session must be completed first.');
 
   const retry = await createSession({
