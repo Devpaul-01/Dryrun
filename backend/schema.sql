@@ -155,6 +155,16 @@ create table subscriptions (
   plan_id                 uuid not null references plans(id),
   provider                text not null default 'flutterwave', -- PaymentProvider.name; new providers just add a value here
   provider_customer_id    text,
+  -- The provider's transaction reference generated at checkout-initiation
+  -- time (flutterwave.provider.ts's initiateCharge builds this) — stored
+  -- so confirmCheckout can match a verified transaction back to the EXACT
+  -- pending subscription row it belongs to, rather than guessing via
+  -- "most recent incomplete row for this workspace" (a real race
+  -- condition if a workspace ever has more than one incomplete attempt
+  -- at once — see billing.service.ts's confirmCheckout for the full fix).
+  -- Cleared (set to null) once a checkout resolves either way (activated
+  -- or superseded), so it's never stale for a future incomplete attempt.
+  pending_tx_ref          text,
   status                  subscription_status not null default 'incomplete',
   current_period_start    timestamptz,
   current_period_end      timestamptz,
@@ -169,6 +179,7 @@ create table subscriptions (
 -- history (incomplete -> active -> canceled -> re-subscribed) is multiple rows.
 create index idx_subscriptions_workspace_created on subscriptions (workspace_id, created_at desc);
 create index idx_subscriptions_provider_created on subscriptions (provider, created_at desc); -- processWebhookEvent.worker's lookup
+create unique index uq_subscriptions_pending_tx_ref on subscriptions (pending_tx_ref) where pending_tx_ref is not null; -- confirmCheckout's exact-match lookup
 
 create table payment_transactions (
   id                  uuid primary key default gen_random_uuid(),
