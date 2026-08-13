@@ -99,6 +99,13 @@ function budgetKey(workspaceId: string) {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Atomic check-and-reserve, via the Lua script registered in
+ * config/redis.ts (see that file's header comment for the full race-
+ * condition rationale). Two concurrent calls for the same workspace can
+ * no longer both observe "under budget" and both proceed — Redis executes
+ * the check-and-increment as one indivisible operation.
+ */
 export async function checkAndReserveBudget(workspaceId: string, estimatedCostUsd = 0.01): Promise<void> {
   // Anonymous demo sessions use the synthetic workspace ID "demo", not a
   // real workspace row — bounded separately by the demo message cap and
@@ -107,12 +114,17 @@ export async function checkAndReserveBudget(workspaceId: string, estimatedCostUs
   if (!UUID_RE.test(workspaceId)) return;
   const redis = redisConnection();
   const key = budgetKey(workspaceId);
-  const spent = parseFloat((await redis.get(key)) ?? '0');
-  if (spent + estimatedCostUsd > env.defaults.aiDailyBudgetUsdPerWorkspace) {
+
+  const reserved = await redis.checkAndReserveBudget(
+    key,
+    String(estimatedCostUsd),
+    String(env.defaults.aiDailyBudgetUsdPerWorkspace),
+    String(60 * 60 * 26) // slightly over a day, covers timezone drift
+  );
+
+  if (reserved !== 1) {
     throw ApiError.budgetExceeded();
   }
-  await redis.incrbyfloat(key, estimatedCostUsd);
-  await redis.expire(key, 60 * 60 * 26); // slightly over a day, covers timezone drift
 }
 
 /** ── Token/cost accounting ──────────────────────────────────────────────── */
