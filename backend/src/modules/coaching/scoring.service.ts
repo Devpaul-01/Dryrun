@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../../config/supabase';
 import { generateSkillScores } from '../ai/ai.service';
 import { createLogger } from '../../config/logger';
+import { invalidate, cacheKeys } from '../../config/cache';
 
 const log = createLogger('scoring-service');
 
@@ -64,4 +65,6 @@ export async function recomputeSkillTrendForUser(userId: string, workspaceId: st
     period_end: new Date().toISOString(),
     sessions_count: scores.length,
   });
+
+  await invalidate(cacheKeys.skillTrend(userId, workspaceId));
 }

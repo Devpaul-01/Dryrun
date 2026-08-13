@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../config/supabase';
+import { cached, invalidate, cacheKeys, CACHE_TTL } from '../../config/cache';
 
 interface BadgeCandidate {
   type: string;
@@ -26,6 +27,7 @@ export async function checkAndAwardBadges(userId: string, workspaceId: string, s
     { type: 'ghostbuster', label: '👻 Ghostbuster', description: 'Earned a reply from Radio Silence', condition: scenarioType === 'radio_silence' },
   ];
 
+  let awardedAny = false;
   for (const candidate of candidates) {
     if (candidate.condition && !earnedSet.has(candidate.type)) {
       await supabaseAdmin().from('badges').insert({
@@ -35,11 +37,18 @@ export async function checkAndAwardBadges(userId: string, workspaceId: string, s
         badge_label: candidate.label,
         badge_description: candidate.description,
       });
+      awardedAny = true;
     }
+  }
+
+  if (awardedAny) {
+    await invalidate(cacheKeys.badgesList(userId));
   }
 }
 
 export async function listBadges(userId: string) {
-  const { data } = await supabaseAdmin().from('badges').select('*').eq('user_id', userId).order('earned_at', { ascending: false });
-  return data ?? [];
+  return cached(cacheKeys.badgesList(userId), { ttlSeconds: CACHE_TTL.LIST_MINUTES_2 }, async () => {
+    const { data } = await supabaseAdmin().from('badges').select('*').eq('user_id', userId).order('earned_at', { ascending: false });
+    return data ?? [];
+  });
 }
