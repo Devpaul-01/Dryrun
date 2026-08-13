@@ -6,6 +6,7 @@ import { generateBuyerReply, generatePersona } from '../ai/ai.service';
 import { runScoringConsistencyCheck } from '../ai/scoringConsistency';
 import { enqueue } from '../../jobs/queues';
 import { MAX_STACKED_PRESSURE_MODIFIERS } from './scenario.config';
+import { invalidateTag, invalidate, cacheKeys, cacheTags } from '../../config/cache';
 
 const log = createLogger('session-service');
 
@@ -158,6 +159,8 @@ export async function createSession(input: CreateSessionInput) {
     difficulty,
   });
 
+  await invalidateTag(cacheTags.sessionsUserWorkspace(input.workspaceId, input.userId));
+
   return getSessionById(session.id, input.workspaceId);
 }
 
@@ -172,7 +175,7 @@ export async function getSessionById(sessionId: string, workspaceId: string) {
   return data;
 }
 
-export async function renameSession(sessionId: string, workspaceId: string, title: string) {
+export async function renameSession(sessionId: string, workspaceId: string, userId: string, title: string) {
   const { data, error } = await supabaseAdmin()
     .from('practice_sessions')
     .update({ title })
@@ -181,15 +184,25 @@ export async function renameSession(sessionId: string, workspaceId: string, titl
     .select('id, title')
     .single();
   if (error || !data) throw ApiError.notFound('Session not found.');
+
+  await invalidateTag(cacheTags.sessionsUserWorkspace(workspaceId, userId));
   return data;
 }
 
-export async function setArchived(sessionId: string, workspaceId: string, archived: boolean) {
+/**
+ * Archiving/unarchiving moves a session between the active and archived
+ * cached list buckets — both must be invalidated, not just the bucket
+ * being transitioned into, since the session also disappears from the
+ * other bucket's cached page.
+ */
+export async function setArchived(sessionId: string, workspaceId: string, userId: string, archived: boolean) {
   await supabaseAdmin()
     .from('practice_sessions')
     .update({ archived_at: archived ? new Date().toISOString() : null })
     .eq('id', sessionId)
     .eq('workspace_id', workspaceId);
+
+  await invalidateTag(cacheTags.sessionsUserWorkspace(workspaceId, userId));
 }
 
 export async function deleteSession(sessionId: string, workspaceId: string, userId: string) {
@@ -199,6 +212,7 @@ export async function deleteSession(sessionId: string, workspaceId: string, user
     throw ApiError.conflict('Completed sessions cannot be deleted — they are used for skill tracking.');
   }
   await supabaseAdmin().from('practice_sessions').delete().eq('id', sessionId);
+  await invalidateTag(cacheTags.sessionsUserWorkspace(workspaceId, userId));
 }
 
 /**
@@ -405,6 +419,15 @@ export async function endSession(sessionId: string, workspaceId: string, userId:
   await enqueue('ai-derivative', 'score_session_skills', { sessionId, workspaceId });
 
   await trackEvent('session_completed', { userId, workspaceId, sessionId }, {});
+
+  // dashboard.last_session reads the most recently completed session
+  // directly — this write invalidates it immediately rather than waiting
+  // out the dashboard's 5-minute TTL, since "I just finished practicing,
+  // why does my dashboard still show the old session" is a much more
+  // noticeable gap than the general dashboard staleness window.
+  await invalidateTag(cacheTags.sessionsUserWorkspace(workspaceId, userId));
+  await invalidate(cacheKeys.dashboard(workspaceId, userId));
+
   return { already_completed: false };
 }
 
