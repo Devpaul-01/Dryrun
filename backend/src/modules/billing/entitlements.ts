@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../../config/supabase';
 import { isPaymentEnforcementEnabled } from '../../config/systemConfig';
 import { trackEvent } from '../analytics/analytics.service';
 import { ResolvedWorkspace } from '../../middleware/resolveWorkspace';
+import { cached, cacheKeys, CACHE_TTL } from '../../config/cache';
 
 export interface EntitlementResult {
   allowed: boolean;
@@ -55,14 +56,26 @@ async function resolveEffectivePlan(workspaceId: string) {
   return getFreePlan();
 }
 
+/**
+ * Cached — resolveEffectivePlan() is called on every single entitlement
+ * check (session start, playbook generation, persona-from-doc, invites),
+ * making this one of the hottest reads in the backend. Same no-app-writer
+ * rationale as billing.service.ts's plan caches: `plans` rows are managed
+ * outside application code, so a 30-minute TTL with no invalidation call
+ * is safe today.
+ */
 async function getPlanById(planId: string) {
-  const { data } = await supabaseAdmin().from('plans').select('*').eq('id', planId).single();
-  return data;
+  return cached(cacheKeys.planById(planId), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
+    const { data } = await supabaseAdmin().from('plans').select('*').eq('id', planId).single();
+    return data;
+  });
 }
 
 async function getFreePlan() {
-  const { data } = await supabaseAdmin().from('plans').select('*').eq('key', 'free').single();
-  return data;
+  return cached(cacheKeys.planByKey('free'), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
+    const { data } = await supabaseAdmin().from('plans').select('*').eq('key', 'free').single();
+    return data;
+  });
 }
 
 /**

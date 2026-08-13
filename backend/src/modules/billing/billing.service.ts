@@ -5,6 +5,7 @@ import { PaymentProvider } from './paymentProvider.interface';
 import { env } from '../../config/env';
 import { trackEvent } from '../analytics/analytics.service';
 import { createLogger } from '../../config/logger';
+import { cached, cacheKeys, CACHE_TTL } from '../../config/cache';
 
 const log = createLogger('billing-service');
 
@@ -13,9 +14,20 @@ function getProvider(name = 'flutterwave'): PaymentProvider {
   return providers[name];
 }
 
+/**
+ * Cached: the active plans catalog changes only via direct DB/admin-panel
+ * action outside this codebase (no app code writes to `plans` at all —
+ * confirmed by grep across every module), so a 30-minute TTL with no
+ * explicit invalidation hook is safe. If an admin endpoint for editing
+ * plans is added later, it must call
+ * `invalidate(cacheKeys.plansActive())` (and the by-key/by-id variants
+ * below) on write.
+ */
 export async function listPlans() {
-  const { data } = await supabaseAdmin().from('plans').select('*').eq('is_active', true).order('price_amount', { ascending: true });
-  return data ?? [];
+  return cached(cacheKeys.plansActive(), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
+    const { data } = await supabaseAdmin().from('plans').select('*').eq('is_active', true).order('price_amount', { ascending: true });
+    return data ?? [];
+  });
 }
 
 export async function getCurrentSubscription(workspaceId: string) {
@@ -30,7 +42,10 @@ export async function getCurrentSubscription(workspaceId: string) {
 }
 
 export async function initiateCheckout(workspaceId: string, planKey: string, userEmail: string) {
-  const { data: plan } = await supabaseAdmin().from('plans').select('*').eq('key', planKey).single();
+  const plan = await cached(cacheKeys.planByKey(planKey), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
+    const { data } = await supabaseAdmin().from('plans').select('*').eq('key', planKey).single();
+    return data ?? null;
+  });
   if (!plan) throw ApiError.notFound('Plan not found.');
 
   const provider = getProvider();
