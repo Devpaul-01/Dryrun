@@ -38,6 +38,11 @@ export const listSessionsQuerySchema = z.object({
   search: z.string().max(200).optional(),
 });
 
+export const messagesQuerySchema = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().min(1).max(200).optional(),
+});
+
 export const attachmentsSchema = z.object({
   upload_ids: z.array(z.string().uuid()).min(1).max(5),
 });
