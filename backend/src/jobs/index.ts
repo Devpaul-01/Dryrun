@@ -84,22 +84,59 @@ function startWorker(queueName: QueueName): Worker {
   return worker;
 }
 
-async function main(): Promise<void> {
+/**
+ * Starts all five queue workers and registers schedules. Exported (rather
+ * than only run via this file's own `main()` below) so a combined
+ * entrypoint (start-all.ts) can start workers in-process alongside the API
+ * server without duplicating this logic or fighting over process-level
+ * signal handlers — see start-all.ts's own comment for why that matters.
+ *
+ * `registerSchedules` is still called here unconditionally to preserve
+ * exact current behavior for standalone worker-mode. NOTE (surfaced, not
+ * fixed, while building the combined entrypoint): registerSchedules()'s
+ * read-then-delete-then-add pattern is not safe against two processes
+ * calling it concurrently at boot — already true today for "two standalone
+ * worker replicas," and equally true for "N combined-mode replicas." This
+ * is pre-existing scheduler.ts behavior, out of scope for this change;
+ * flagged for a dedicated fix (e.g. a Redis lock around registration, or
+ * migrating off the deprecated repeatable-jobs API to BullMQ's Job
+ * Scheduler API, which is idempotent by job-scheduler-id).
+ */
+export async function startAllWorkers(): Promise<Worker[]> {
   log.info('Starting DryRun background workers...');
   const workers = QUEUE_NAMES.map(startWorker);
   await registerSchedules();
   log.info({ queues: QUEUE_NAMES }, 'All workers started and schedules registered');
+  return workers;
+}
+
+/** Closes every worker, draining in-flight jobs before resolving. */
+export async function shutdownWorkers(workers: Worker[]): Promise<void> {
+  await Promise.all(workers.map((w) => w.close()));
+}
+
+async function main(): Promise<void> {
+  const workers = await startAllWorkers();
 
   const shutdown = async (signal: string) => {
     log.info({ signal }, 'Shutting down workers — draining in-flight jobs...');
-    await Promise.all(workers.map((w) => w.close()));
+    await shutdownWorkers(workers);
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-main().catch((err) => {
-  log.error({ err }, 'Fatal error starting workers');
-  process.exit(1);
-});
+// Only self-invoke in standalone worker-mode. When start-all.ts imports
+// startAllWorkers/shutdownWorkers directly, this module's own main() must
+// NOT also run — otherwise the combined process would start every worker
+// twice and register two competing sets of SIGTERM/SIGINT handlers.
+// require.main === module is the standard Node idiom for "was this file
+// executed directly, or only imported by something else" — true when
+// launched as `node dist/jobs/index.js`, false when `import`ed.
+if (require.main === module) {
+  main().catch((err) => {
+    log.error({ err }, 'Fatal error starting workers');
+    process.exit(1);
+  });
+}
