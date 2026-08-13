@@ -4,9 +4,15 @@ import { asyncHandler } from '../../lib/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { supabaseAdmin } from '../../config/supabase';
 import { setConfig } from '../../config/systemConfig';
-import { getDeadLetterJobs, retryJob, getAllQueueDepths } from '../../jobs/queues';
+import { getQueue, retryJob, getAllQueueDepths, QueueName } from '../../jobs/queues';
+import { fetchDeadLetterPage } from '../../jobs/deadLetterPagination';
 
 const router = Router();
+
+const deadLetterQuerySchema = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().min(1).max(100).optional(),
+});
 
 /**
  * Every route here additionally requires the caller to have an internal
@@ -25,9 +31,11 @@ router.get(
 
 router.get(
   '/jobs/dead-letter',
+  validate({ query: deadLetterQuerySchema }),
   asyncHandler(async (req, res) => {
-    const jobs = await getDeadLetterJobs();
-    res.json({ jobs });
+    const { cursor, limit } = req.query as unknown as z.infer<typeof deadLetterQuerySchema>;
+    const page = await fetchDeadLetterPage((name: QueueName) => getQueue(name), { cursor, limit });
+    res.json(page);
   })
 );
 
