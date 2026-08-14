@@ -5,7 +5,6 @@ import { PaymentProvider } from './paymentProvider.interface';
 import { env } from '../../config/env';
 import { trackEvent } from '../analytics/analytics.service';
 import { createLogger } from '../../config/logger';
-import { cached, cacheKeys, CACHE_TTL } from '../../config/cache';
 
 const log = createLogger('billing-service');
 
@@ -14,20 +13,9 @@ function getProvider(name = 'flutterwave'): PaymentProvider {
   return providers[name];
 }
 
-/**
- * Cached: the active plans catalog changes only via direct DB/admin-panel
- * action outside this codebase (no app code writes to `plans` at all —
- * confirmed by grep across every module), so a 30-minute TTL with no
- * explicit invalidation hook is safe. If an admin endpoint for editing
- * plans is added later, it must call
- * `invalidate(cacheKeys.plansActive())` (and the by-key/by-id variants
- * below) on write.
- */
 export async function listPlans() {
-  return cached(cacheKeys.plansActive(), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
-    const { data } = await supabaseAdmin().from('plans').select('*').eq('is_active', true).order('price_amount', { ascending: true });
-    return data ?? [];
-  });
+  const { data } = await supabaseAdmin().from('plans').select('*').eq('is_active', true).order('price_amount', { ascending: true });
+  return data ?? [];
 }
 
 export async function getCurrentSubscription(workspaceId: string) {
@@ -42,10 +30,7 @@ export async function getCurrentSubscription(workspaceId: string) {
 }
 
 export async function initiateCheckout(workspaceId: string, planKey: string, userEmail: string) {
-  const plan = await cached(cacheKeys.planByKey(planKey), { ttlSeconds: CACHE_TTL.STABLE_MINUTES_30 }, async () => {
-    const { data } = await supabaseAdmin().from('plans').select('*').eq('key', planKey).single();
-    return data ?? null;
-  });
+  const { data: plan } = await supabaseAdmin().from('plans').select('*').eq('key', planKey).single();
   if (!plan) throw ApiError.notFound('Plan not found.');
 
   const provider = getProvider();
@@ -63,27 +48,12 @@ export async function initiateCheckout(workspaceId: string, planKey: string, use
     plan_id: plan.id,
     provider: provider.name,
     provider_customer_id: customer.providerCustomerId,
-    // Stored so confirmCheckout can match the exact pending row this
-    // checkout belongs to (see that function's own comment for the race
-    // condition this closes) rather than guessing via recency.
-    pending_tx_ref: checkout.providerTxRef,
     status: 'incomplete',
   });
 
   return checkout;
 }
 
-/**
- * FIX: this used to find "the most recent incomplete subscription row
- * for this workspace" and activate it, with no check that providerTxRef
- * actually belongs to that specific row. If a workspace had more than one
- * incomplete checkout in flight at once (a double-click on "upgrade", or
- * a retried checkout for a different plan before the first one
- * resolved), confirming one transaction could activate the WRONG pending
- * row — e.g. activating a stale attempt for the wrong plan. Now matches
- * by pending_tx_ref exactly, which initiateCheckout stores at the moment
- * the checkout is created.
- */
 export async function confirmCheckout(workspaceId: string, providerTxRef: string) {
   const provider = getProvider();
   const result = await provider.verifyTransaction(providerTxRef);
@@ -98,10 +68,11 @@ export async function confirmCheckout(workspaceId: string, providerTxRef: string
     .select('id, plan_id')
     .eq('workspace_id', workspaceId)
     .eq('status', 'incomplete')
-    .eq('pending_tx_ref', providerTxRef)
+    .order('created_at', { ascending: false })
+    .limit(1)
     .single();
 
-  if (!sub) throw ApiError.notFound('No pending checkout found for this workspace matching this transaction.');
+  if (!sub) throw ApiError.notFound('No pending checkout found for this workspace.');
 
   await supabaseAdmin()
     .from('subscriptions')
@@ -109,7 +80,6 @@ export async function confirmCheckout(workspaceId: string, providerTxRef: string
       status: 'active',
       current_period_start: now.toISOString(),
       current_period_end: periodEnd.toISOString(),
-      pending_tx_ref: null, // cleared now that this checkout has resolved
     })
     .eq('id', sub.id);
 
