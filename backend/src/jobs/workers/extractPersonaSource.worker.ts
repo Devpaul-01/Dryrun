@@ -11,9 +11,9 @@ const log = createLogger('extract-persona-source-worker');
 const PII_PATTERN = /@[\w.-]+\.\w+|\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/; // email or phone-like patterns
 
 export async function extractPersonaSourceHandler(
-  job: Job<{ personaId: string; personaSourceId: string; workspaceId: string; scenarioType: string; sourceKind: string }>
+  job: Job<{ personaId: string; personaSourceId: string; workspaceId: string; userId?: string; scenarioType: string; sourceKind: string }>
 ): Promise<void> {
-  const { personaId, personaSourceId, workspaceId, scenarioType, sourceKind } = job.data;
+  const { personaId, personaSourceId, workspaceId, userId, scenarioType, sourceKind } = job.data;
 
   const { data: source } = await supabaseAdmin().from('persona_sources').select('*').eq('id', personaSourceId).single();
   if (!source) return;
@@ -32,7 +32,7 @@ export async function extractPersonaSourceHandler(
 
       if (upload.mime_type === 'application/pdf') extractedText = await extractTextFromPdf(buffer);
       else if (upload.mime_type.includes('word')) extractedText = await extractTextFromDocx(buffer);
-      else if (upload.mime_type.startsWith('image/')) extractedText = await extractTextFromImage(buffer);
+      else if (upload.mime_type.startsWith('image/')) extractedText = await extractTextFromImage(buffer, upload.mime_type);
       else extractedText = buffer.toString('utf8').slice(0, 20000);
     }
 
@@ -44,7 +44,7 @@ export async function extractPersonaSourceHandler(
       .eq('id', personaSourceId);
 
     await publishStatus('persona', personaId, 'extracted', { personaId });
-    await enqueue('persona-ingestion', 'synthesize_persona', { personaId, personaSourceId, workspaceId, scenarioType });
+    await enqueue('persona-ingestion', 'synthesize_persona', { personaId, personaSourceId, workspaceId, userId, scenarioType });
   } catch (err) {
     log.error({ err, personaSourceId }, 'Persona source extraction failed');
     await supabaseAdmin().from('persona_sources').update({ status: 'extraction_failed' }).eq('id', personaSourceId);

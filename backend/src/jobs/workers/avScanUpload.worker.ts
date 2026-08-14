@@ -45,6 +45,7 @@ export async function avScanUploadHandler(job: Job<{ uploadId: string; workspace
         personaId: source.persona_id,
         personaSourceId: source.id,
         workspaceId,
+        userId: upload.user_id,
         sourceKind: 'upload',
       });
     }
