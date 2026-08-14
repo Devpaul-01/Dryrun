@@ -7,10 +7,16 @@ import { canGeneratePlaybook } from '../billing/entitlements';
 import { expensiveActionRateLimit } from '../../middleware/rateLimit';
 import { withIdempotency } from '../../lib/idempotency';
 import * as playbookService from './playbook.service';
-import * as badgesService from './badges.service';
-import * as curriculumService from './curriculum.service';
 import { supabaseAdmin } from '../../config/supabase';
 
+/**
+ * Split out of the original coaching.routes.ts (item #14, router
+ * refactoring) — playbooks, badges, skill-trend, and curriculum were four
+ * genuinely distinct sub-concerns bundled into one 176-line file. All
+ * four split files are still mounted under the same /api/v1 prefix in
+ * app.ts, so the public route paths are unchanged; this is purely an
+ * internal file-organization change.
+ */
 const router = Router();
 
 const generatePlaybookSchema = z.object({
@@ -88,6 +94,8 @@ router.delete(
   })
 );
 
+export default router;
+
 /** Public, unauthenticated — mounted separately in app.ts under /public. */
 export const publicPlaybookRouter = Router();
 publicPlaybookRouter.get(
@@ -97,69 +105,3 @@ publicPlaybookRouter.get(
     res.json({ playbook });
   })
 );
-
-router.get(
-  '/badges',
-  asyncHandler(async (req, res) => {
-    const badges = await badgesService.listBadges(req.user!.id);
-    res.json({ badges });
-  })
-);
-
-router.get(
-  '/skill-trend',
-  asyncHandler(async (req, res) => {
-    const { data } = await supabaseAdmin()
-      .from('user_skill_trend')
-      .select('*')
-      .eq('user_id', req.user!.id)
-      .eq('workspace_id', req.workspace!.id)
-      .order('period_start', { ascending: false })
-      .limit(12);
-    res.json({ trend: data ?? [] });
-  })
-);
-
-router.get(
-  '/skill-trend/goals',
-  asyncHandler(async (req, res) => {
-    const { data } = await supabaseAdmin()
-      .from('session_goals')
-      .select('goal_type, goal_achieved, practice_sessions!inner(user_id, workspace_id)')
-      .eq('practice_sessions.user_id', req.user!.id)
-      .eq('practice_sessions.workspace_id', req.workspace!.id);
-
-    const byType = new Map<string, { total: number; achieved: number }>();
-    for (const row of data ?? []) {
-      const entry = byType.get(row.goal_type) ?? { total: 0, achieved: 0 };
-      entry.total += 1;
-      if (row.goal_achieved) entry.achieved += 1;
-      byType.set(row.goal_type, entry);
-    }
-    const rates = Array.from(byType.entries()).map(([goalType, v]) => ({
-      goal_type: goalType,
-      rate: v.total > 0 ? Math.round((v.achieved / v.total) * 100) : 0,
-      total: v.total,
-    }));
-    res.json({ goal_achievement_rates: rates });
-  })
-);
-
-router.get(
-  '/curriculum/current',
-  asyncHandler(async (req, res) => {
-    const curriculum = await curriculumService.getCurrentCurriculum(req.user!.id, req.workspace!.id);
-    res.json({ curriculum });
-  })
-);
-
-router.post(
-  '/curriculum/dismiss',
-  validate({ body: z.object({ curriculum_id: z.string().uuid() }) }),
-  asyncHandler(async (req, res) => {
-    await curriculumService.dismissCurriculum(req.body.curriculum_id, req.user!.id);
-    res.json({ success: true });
-  })
-);
-
-export default router;
