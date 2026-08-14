@@ -616,31 +616,33 @@ create index idx_analytics_events_name_occurred on analytics_events (event_name,
 -- surfaces rather than papers over — see Stage-1 write-up for the fix options.
 
 -- =============================================================================
--- Auth token tables
+-- Auth token tables — RETIRED as of the Supabase-native email migration
 -- =============================================================================
--- NOTE: Stage 5 of this refinement (Supabase-native email) is expected to
--- retire these two tables in favor of Supabase Auth's own flows. Kept here
--- because they are still in active use until that stage lands.
-
-create table email_verification_tokens (
-  id            uuid primary key default gen_random_uuid(),
-  user_id       uuid not null references users(id) on delete cascade,
-  token_hash    text not null unique,
-  expires_at    timestamptz not null,
-  consumed_at   timestamptz,
-  created_at    timestamptz not null default now()
-);
-
-create index idx_email_verif_tokens_user_pending on email_verification_tokens (user_id) where consumed_at is null;
-
-create table password_reset_tokens (
-  id            uuid primary key default gen_random_uuid(),
-  user_id       uuid not null references users(id) on delete cascade,
-  token_hash    text not null unique,
-  expires_at    timestamptz not null,
-  consumed_at   timestamptz,
-  created_at    timestamptz not null default now()
-);
+-- email_verification_tokens and password_reset_tokens (previously declared
+-- here) are no longer used by any application code as of this migration.
+-- modules/auth/auth.service.ts now uses Supabase's own token lifecycle
+-- (admin.generateLink + verifyOtp for email confirmation, since
+-- admin.createUser never triggers Supabase's own email sending regardless
+-- of settings; resetPasswordForEmail + the Send Email Hook for password
+-- reset, since that IS a genuine Supabase-mailer-triggering flow) — see
+-- that file's header comment for the full rationale of why two different
+-- mechanisms are used for what looks like the same kind of token.
+--
+-- MIGRATION: these DROP statements are deliberately written out (not
+-- silently omitted) so a real running database's history stays honest —
+-- run this against an existing production database only after confirming
+-- no in-flight verification/reset email sent under the old flow is still
+-- unconsumed (any token issued under the old system becomes unusable the
+-- moment this runs, same as any client already mid-flow when the backend
+-- deploys this migration would be after redeploying the app code alone).
+--
+--   drop table if exists email_verification_tokens;
+--   drop table if exists password_reset_tokens;
+--
+-- Left commented-out rather than executed unconditionally in this file,
+-- since running it is a one-way migration step that should be applied
+-- deliberately alongside the corresponding application deploy, not
+-- bundled invisibly into a full from-scratch schema run.
 
 -- =============================================================================
 -- updated_at maintenance trigger (applied to every table with the column)
@@ -717,8 +719,6 @@ alter table webhook_signature_failures enable row level security;
 alter table audit_log enable row level security;
 alter table system_config enable row level security;
 alter table plans enable row level security;
-alter table email_verification_tokens enable row level security;
-alter table password_reset_tokens enable row level security;
 
 -- `plans` is the one table safe to expose read-only to authenticated users
 -- directly (billing.routes.ts's GET /plans has no side-effect risk and this
