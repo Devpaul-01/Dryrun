@@ -91,16 +91,14 @@ function startWorker(queueName: QueueName): Worker {
  * server without duplicating this logic or fighting over process-level
  * signal handlers — see start-all.ts's own comment for why that matters.
  *
- * `registerSchedules` is still called here unconditionally to preserve
- * exact current behavior for standalone worker-mode. NOTE (surfaced, not
- * fixed, while building the combined entrypoint): registerSchedules()'s
- * read-then-delete-then-add pattern is not safe against two processes
- * calling it concurrently at boot — already true today for "two standalone
- * worker replicas," and equally true for "N combined-mode replicas." This
- * is pre-existing scheduler.ts behavior, out of scope for this change;
- * flagged for a dedicated fix (e.g. a Redis lock around registration, or
- * migrating off the deprecated repeatable-jobs API to BullMQ's Job
- * Scheduler API, which is idempotent by job-scheduler-id).
+ * `registerSchedules` is called here unconditionally — safe to call from
+ * any number of concurrently-booting processes (standalone worker
+ * replicas or combined-mode replicas via start-all.ts) since
+ * scheduler.ts now uses BullMQ's Job Scheduler API (upsertJobScheduler),
+ * which is atomic and idempotent by job-scheduler-id at the Redis level.
+ * This used to require a manual distributed lock around a non-atomic
+ * read-delete-add sequence against BullMQ's now-deprecated repeatable-
+ * jobs API — see scheduler.ts's own header comment for the full history.
  */
 export async function startAllWorkers(): Promise<Worker[]> {
   log.info('Starting DryRun background workers...');
