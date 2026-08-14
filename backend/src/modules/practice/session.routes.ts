@@ -195,6 +195,39 @@ router.get(
   })
 );
 
+const exportQuerySchema = z.object({
+  format: z.enum(['json', 'text']).optional().default('json'),
+});
+
+/**
+ * Exports one session's full transcript, persona, goal, debrief, and
+ * skill scores. Synchronous (unlike GET /user/export's queued full-
+ * account export) since a single session's data is small and the user is
+ * actively waiting on it. `?format=text` returns a plain-text transcript
+ * with a Content-Disposition download header; the default `json` returns
+ * the structured payload as a normal API response (no download header —
+ * left to the frontend to decide whether to trigger a file save).
+ */
+router.get(
+  '/:id/export',
+  validate({ query: exportQuerySchema }),
+  asyncHandler(async (req, res) => {
+    const { format } = req.query as unknown as z.infer<typeof exportQuerySchema>;
+    const payload = await debriefService.exportSessionData(req.params.id, req.workspace!.id, req.user!.id);
+
+    if (format === 'text') {
+      const text = debriefService.renderSessionExportAsText(payload);
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="session-${req.params.id}.txt"`);
+      res.send(text);
+      return;
+    }
+
+    res.setHeader('Content-Disposition', `attachment; filename="session-${req.params.id}.json"`);
+    res.json(payload);
+  })
+);
+
 router.post(
   '/:id/retry',
   entitlement(canStartSession),
