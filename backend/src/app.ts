@@ -13,6 +13,7 @@ import { errorHandler } from './middleware/errorHandler';
 import { defaultRateLimit } from './middleware/rateLimit';
 
 import authRoutes from './modules/auth/auth.routes';
+import emailHookRoutes from './modules/auth/emailHook.routes';
 import userRoutes from './modules/auth/user.routes';
 import workspaceRoutes from './modules/workspace/workspace.routes';
 import onboardingRoutes from './modules/practice/onboarding.routes';
@@ -55,6 +56,17 @@ app.use(
   })
 );
 app.use(cookieParser());
+
+// MUST be mounted before express.json() below — this route needs the
+// exact raw request body bytes for Standard Webhooks signature
+// verification (see modules/auth/emailHook.routes.ts's header comment
+// for the full rationale and why this differs from the Flutterwave
+// webhook's mounting, which is fine after JSON parsing). As a
+// consequence this route also runs before `requestLogging` and won't
+// appear in the automatic pino-http access log — it logs its own
+// success/failure explicitly instead (see emailHook.routes.ts).
+app.use('/api/v1/auth/email-hook', express.raw({ type: 'application/json' }), emailHookRoutes);
+
 app.use(express.json({ limit: '1mb' })); // request-size sanity bound (19.6) -- schemas further bound individual fields
 app.use(requestLogging);
 
