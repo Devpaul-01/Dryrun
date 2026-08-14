@@ -2,16 +2,26 @@ import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
 import { enqueue } from '../../jobs/queues';
 import { trackEvent } from '../analytics/analytics.service';
+import { cached, invalidateTag, cacheKeys, cacheTags, CACHE_TTL } from '../../config/cache';
 
+/**
+ * Cached list, tagged so any persona mutation for this workspace
+ * (createManualPersona, createPersonaFromSource, the async
+ * synthesizePersona.worker completion, updatePersona, deletePersona) can
+ * invalidate it via `invalidateTag(cacheTags.personasWorkspace(workspaceId))`
+ * without needing to know the exact cache key shape.
+ */
 export async function listPersonas(workspaceId: string) {
-  const { data } = await supabaseAdmin()
-    .from('personas')
-    .select('id, name, role, source_type, reusable, created_at')
-    .eq('workspace_id', workspaceId)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-    .limit(100); // offset-acceptable at current expected scale, per architecture §2.10 note
-  return data ?? [];
+  return cached(cacheKeys.personasList(workspaceId), { ttlSeconds: CACHE_TTL.LIST_MINUTES_2, tags: [cacheTags.personasWorkspace(workspaceId)] }, async () => {
+    const { data } = await supabaseAdmin()
+      .from('personas')
+      .select('id, name, role, source_type, reusable, created_at')
+      .eq('workspace_id', workspaceId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(100); // offset-acceptable at current expected scale, per architecture §2.10 note
+    return data ?? [];
+  });
 }
 
 export async function createManualPersona(
@@ -44,6 +54,7 @@ export async function createManualPersona(
     .single();
   if (error || !data) throw ApiError.internal('Failed to create persona.');
 
+  await invalidateTag(cacheTags.personasWorkspace(workspaceId));
   await trackEvent('persona_created', { userId, workspaceId }, { sourceType: 'manual' });
   return data;
 }
@@ -53,6 +64,11 @@ export async function createManualPersona(
  * synthesizes fast enough to feel synchronous; URL/upload sources are
  * queued and the client is notified via a Supabase Realtime channel
  * scoped to the returned persona ID (see realtime/channels.ts).
+ *
+ * Invalidates the list cache here (the placeholder "Generating…" persona
+ * is now visible in a list read) AND again from
+ * jobs/workers/synthesizePersona.worker.ts once the real content lands —
+ * both writes are visible mutations of what listPersonas() returns.
  */
 export async function createPersonaFromSource(input: {
   workspaceId: string;
@@ -98,7 +114,6 @@ export async function createPersonaFromSource(input: {
       personaId: persona.id,
       personaSourceId: source.id,
       workspaceId: input.workspaceId,
-      userId: input.userId,
       scenarioType: input.scenarioType,
     });
   } else {
@@ -106,12 +121,12 @@ export async function createPersonaFromSource(input: {
       personaId: persona.id,
       personaSourceId: source.id,
       workspaceId: input.workspaceId,
-      userId: input.userId,
       scenarioType: input.scenarioType,
       sourceKind: input.sourceKind,
     });
   }
 
+  await invalidateTag(cacheTags.personasWorkspace(input.workspaceId));
   await trackEvent('persona_created', { userId: input.userId, workspaceId: input.workspaceId }, {
     sourceType: input.sourceKind,
   });
@@ -137,16 +152,26 @@ export async function updatePersona(id: string, workspaceId: string, updates: Re
     .update(updates)
     .eq('id', id)
     .eq('workspace_id', workspaceId)
+    .is('deleted_at', null)
     .select('*')
     .single();
   if (error || !data) throw ApiError.notFound('Persona not found.');
+
+  await invalidateTag(cacheTags.personasWorkspace(workspaceId));
   return data;
 }
 
 export async function deletePersona(id: string, workspaceId: string) {
-  await supabaseAdmin()
+  const { data, error } = await supabaseAdmin()
     .from('personas')
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', id)
-    .eq('workspace_id', workspaceId);
+    .eq('workspace_id', workspaceId)
+    .is('deleted_at', null)
+    .select('id')
+    .maybeSingle();
+
+  if (error || !data) throw ApiError.notFound('Persona not found.');
+
+  await invalidateTag(cacheTags.personasWorkspace(workspaceId));
 }

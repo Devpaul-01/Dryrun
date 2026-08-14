@@ -42,7 +42,7 @@ router.post(
   '/:id/complete',
   uploadRateLimit,
   asyncHandler(async (req, res) => {
-    const result = await uploadService.completeUpload(req.params.id, req.workspace!.id);
+    const result = await uploadService.completeUpload(req.params.id, req.workspace!.id, req.user!.id);
     res.json(result);
   })
 );
@@ -50,7 +50,7 @@ router.post(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const upload = await uploadService.getUpload(req.params.id, req.workspace!.id);
+    const upload = await uploadService.getUpload(req.params.id, req.workspace!.id, req.user!.id);
     res.json({ upload });
   })
 );
@@ -58,7 +58,7 @@ router.get(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    await uploadService.deleteUpload(req.params.id, req.workspace!.id);
+    await uploadService.deleteUpload(req.params.id, req.workspace!.id, req.user!.id);
     res.json({ success: true });
   })
 );
