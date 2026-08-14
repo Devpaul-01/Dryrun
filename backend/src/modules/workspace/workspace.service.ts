@@ -102,6 +102,17 @@ export async function createInvite(
   return invite;
 }
 
+/**
+ * FIX: the workspace_members insert's error was never checked. If the
+ * user is already an active member of this workspace (re-invited while a
+ * stale invite link still existed, or the invite was accepted twice),
+ * the insert fails against the (workspace_id, user_id) unique constraint
+ * — but the code proceeded anyway, marking the invite 'accepted' and
+ * firing a workspace_member_joined analytics event even though no
+ * membership row was actually created. Now checks the insert's result
+ * and gives a clear, correct response for the already-a-member case
+ * rather than reporting success for something that didn't happen.
+ */
 export async function acceptInvite(token: string, userId: string) {
   const tokenHash = hashToken(token);
   const { data: invite, error } = await supabaseAdmin()
@@ -114,26 +125,67 @@ export async function acceptInvite(token: string, userId: string) {
     throw ApiError.badRequest('This invite is invalid or has expired.');
   }
 
-  await supabaseAdmin().from('workspace_members').insert({
-    workspace_id: invite.workspace_id,
-    user_id: userId,
-    role: invite.role,
-    status: 'active',
-    joined_at: new Date().toISOString(),
-  });
+  const { data: existingMembership } = await supabaseAdmin()
+    .from('workspace_members')
+    .select('id, status')
+    .eq('workspace_id', invite.workspace_id)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (existingMembership?.status === 'active') {
+    // Already a member — mark this stale invite accepted so it can't be
+    // reused, but don't pretend a fresh join just happened.
+    await supabaseAdmin().from('workspace_invites').update({ status: 'accepted' }).eq('id', invite.id);
+    return { workspaceId: invite.workspace_id, alreadyMember: true };
+  }
+
+  if (existingMembership) {
+    // A 'removed' membership row already exists for this (workspace, user)
+    // pair — the unique constraint means we must update it back to active
+    // rather than insert a second row for the same pair.
+    const { error: updateError } = await supabaseAdmin()
+      .from('workspace_members')
+      .update({ role: invite.role, status: 'active', joined_at: new Date().toISOString() })
+      .eq('id', existingMembership.id);
+    if (updateError) throw ApiError.internal('Failed to accept invite.');
+  } else {
+    const { error: insertError } = await supabaseAdmin().from('workspace_members').insert({
+      workspace_id: invite.workspace_id,
+      user_id: userId,
+      role: invite.role,
+      status: 'active',
+      joined_at: new Date().toISOString(),
+    });
+    if (insertError) throw ApiError.internal('Failed to accept invite.');
+  }
 
   await supabaseAdmin().from('workspace_invites').update({ status: 'accepted' }).eq('id', invite.id);
   await trackEvent('workspace_member_joined', { workspaceId: invite.workspace_id, userId }, {});
 
-  return { workspaceId: invite.workspace_id };
+  return { workspaceId: invite.workspace_id, alreadyMember: false };
 }
 
+/**
+ * FIX: the update's result was previously never checked, meaning a
+ * memberUserId that isn't actually an active member of this workspace
+ * (typo, stale client state, or a member already removed) would silently
+ * match zero rows while an audit_log entry claiming 'member_removed'
+ * still got written unconditionally — a false record in exactly the
+ * table that exists to be a trustworthy account of what happened.
+ */
 export async function removeMember(workspaceId: string, memberUserId: string, actorUserId: string) {
-  await supabaseAdmin()
+  const { data, error } = await supabaseAdmin()
     .from('workspace_members')
     .update({ status: 'removed' })
     .eq('workspace_id', workspaceId)
-    .eq('user_id', memberUserId);
+    .eq('user_id', memberUserId)
+    .eq('status', 'active')
+    .select('id')
+    .maybeSingle();
+
+  if (error || !data) {
+    throw ApiError.notFound('This user is not an active member of this workspace.');
+  }
 
   await invalidateWorkspaceContextCache(memberUserId, workspaceId);
   await supabaseAdmin().from('audit_log').insert({
@@ -146,17 +198,25 @@ export async function removeMember(workspaceId: string, memberUserId: string, ac
   });
 }
 
+/** Same fix as removeMember above: verify the update actually matched an active member before recording the audit entry. */
 export async function updateMemberRole(
   workspaceId: string,
   memberUserId: string,
   newRole: 'admin' | 'member',
   actorUserId: string
 ) {
-  await supabaseAdmin()
+  const { data, error } = await supabaseAdmin()
     .from('workspace_members')
     .update({ role: newRole })
     .eq('workspace_id', workspaceId)
-    .eq('user_id', memberUserId);
+    .eq('user_id', memberUserId)
+    .eq('status', 'active')
+    .select('id')
+    .maybeSingle();
+
+  if (error || !data) {
+    throw ApiError.notFound('This user is not an active member of this workspace.');
+  }
 
   await invalidateWorkspaceContextCache(memberUserId, workspaceId);
   await supabaseAdmin().from('audit_log').insert({
@@ -169,7 +229,34 @@ export async function updateMemberRole(
   });
 }
 
+/**
+ * SECURITY/INTEGRITY FIX: this used to write workspaces.owner_user_id
+ * unconditionally, with no check that newOwnerUserId is actually an
+ * active member of this workspace. requireRole('owner') at the route
+ * only verifies the CALLER's role — it says nothing about the TARGET
+ * user. Without this check, a typo'd or malicious newOwnerUserId would
+ * still succeed on the first write (workspaces.owner_user_id now points
+ * to a non-member), while the second write (promoting that user's
+ * workspace_members row to 'owner') would silently match zero rows since
+ * they have no membership row in this workspace at all — leaving the
+ * workspace with an owner_user_id pointing to a non-member AND no row
+ * anywhere holding the 'owner' role, since the real owner was already
+ * demoted to 'admin' by the third write. A genuinely corrupted, hard-to-
+ * recover ownership record, not just an authorization gap.
+ */
 export async function transferOwnership(workspaceId: string, newOwnerUserId: string, currentOwnerUserId: string) {
+  const { data: targetMembership } = await supabaseAdmin()
+    .from('workspace_members')
+    .select('id')
+    .eq('workspace_id', workspaceId)
+    .eq('user_id', newOwnerUserId)
+    .eq('status', 'active')
+    .maybeSingle();
+
+  if (!targetMembership) {
+    throw ApiError.badRequest('The new owner must be an active member of this workspace.');
+  }
+
   await supabaseAdmin().from('workspaces').update({ owner_user_id: newOwnerUserId }).eq('id', workspaceId);
   await supabaseAdmin()
     .from('workspace_members')

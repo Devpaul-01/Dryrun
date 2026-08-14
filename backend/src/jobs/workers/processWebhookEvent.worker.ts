@@ -6,6 +6,25 @@ import { createLogger } from '../../config/logger';
 
 const log = createLogger('process-webhook-event-worker');
 
+/**
+ * SECURITY/INTEGRITY FIX — the most severe finding surfaced by this
+ * review: this handler used to match "the most recent subscription row
+ * across the ENTIRE flutterwave provider," with NO workspace filter and
+ * NO tie to the actual transaction reference the webhook was about. In
+ * any deployment with more than one workspace, a genuine successful-
+ * payment webhook for workspace A could activate workspace B's pending
+ * subscription instead (whichever happened to be most recently created,
+ * regardless of which workspace the payment was actually for), and the
+ * failure branch could send a "payment failed" email to the wrong
+ * workspace's owner. This is a real cross-tenant billing-state
+ * misattribution bug reachable by ordinary external payment-provider
+ * traffic, not just an internal edge case.
+ *
+ * Fixed the same way as billing.service.ts's confirmCheckout: match by
+ * the exact pending_tx_ref that initiateCheckout stored on the
+ * subscription row at checkout-creation time, instead of guessing via
+ * recency with no workspace scoping at all.
+ */
 export async function processWebhookEventHandler(job: Job<{ webhookEventId: string }>): Promise<void> {
   const { data: event } = await supabaseAdmin().from('webhook_events').select('*').eq('id', job.data.webhookEventId).single();
   if (!event || event.processed) return;
@@ -26,17 +45,22 @@ export async function processWebhookEventHandler(job: Job<{ webhookEventId: stri
     .from('subscriptions')
     .select('id, workspace_id')
     .eq('provider', 'flutterwave')
-    .order('created_at', { ascending: false })
-    .limit(1)
+    .eq('pending_tx_ref', txRef)
     .maybeSingle();
 
-  if (verification.success && subscription) {
+  if (!subscription) {
+    log.warn({ eventId: event.id, txRef }, 'No pending subscription found matching this transaction reference — nothing to reconcile');
+    await supabaseAdmin().from('webhook_events').update({ processed: true, processed_at: new Date().toISOString() }).eq('id', event.id);
+    return;
+  }
+
+  if (verification.success) {
     const periodEnd = new Date();
     periodEnd.setMonth(periodEnd.getMonth() + 1);
 
     await supabaseAdmin()
       .from('subscriptions')
-      .update({ status: 'active', current_period_end: periodEnd.toISOString() })
+      .update({ status: 'active', current_period_end: periodEnd.toISOString(), pending_tx_ref: null })
       .eq('id', subscription.id);
 
     await supabaseAdmin().from('payment_transactions').insert({
@@ -56,7 +80,7 @@ export async function processWebhookEventHandler(job: Job<{ webhookEventId: stri
       target_id: subscription.id,
       metadata: { txRef },
     });
-  } else if (subscription) {
+  } else {
     await enqueue('notifications', 'send_payment_failed_email', { workspaceId: subscription.workspace_id });
   }
 
