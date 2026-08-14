@@ -28,7 +28,7 @@ const FALLBACK_NEUTRAL_RESPONSE: LiveTurnResponse = {
   state_delta: { interest_delta: 0, trust_delta: 0, confusion_delta: 0, reasoning: 'Validation fallback — no delta applied.' },
   buying_intent_score: 0,
   objection_likelihood_score: 0,
-  goal_progress: null,
+  goal_achieved: null,
   natural_ending: null,
 };
 

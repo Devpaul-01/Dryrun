@@ -327,8 +327,17 @@ create table session_goals (
   session_id      uuid primary key references practice_sessions(id) on delete cascade,
   goal_type       text not null, -- GOAL_TYPES in scenario.config.ts
   custom_text     text,
-  goal_progress   integer check (goal_progress between 0 and 100),
-  goal_achieved   boolean, -- [INFERRED] referenced by coaching.routes.ts's goal-achievement-rate query but never written anywhere in the provided code — likely set by a debrief/scoring step not present in this file set. Flagging so you can confirm the writer.
+  -- goal_progress (a 0-100 AI-generated score) was removed in favor of a
+  -- direct achievement judgment — the model was never given per-goal-type
+  -- anchoring for what a given number meant, making the score an
+  -- uncalibrated proxy. goal_achieved below is now set directly from the
+  -- model's own yes/no judgment (see promptBuilder.ts's per-goal-type
+  -- criteria and session.service.ts's sendMessage()).
+  --
+  -- MIGRATION: if goal_progress already exists on a running database,
+  -- drop it manually once deployed — deliberately not auto-executed here:
+  --   alter table session_goals drop column if exists goal_progress;
+  goal_achieved   boolean, -- written by session.service.ts's sendMessage() once the AI judges the goal achieved; sticky — never reset back to false/null once true
   created_at      timestamptz not null default now()
 );
 
