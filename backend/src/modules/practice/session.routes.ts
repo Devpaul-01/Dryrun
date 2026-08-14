@@ -78,7 +78,7 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const session = await sessionService.getSessionById(req.params.id, req.workspace!.id);
+    const session = await sessionService.getSessionById(req.params.id, req.workspace!.id, req.user!.id);
     res.json({ session });
   })
 );
@@ -143,7 +143,7 @@ router.get(
   '/:id/messages',
   validate({ query: messagesQuerySchema }),
   asyncHandler(async (req, res) => {
-    await sessionService.getSessionById(req.params.id, req.workspace!.id); // 404s if not found/owned
+    await sessionService.getSessionById(req.params.id, req.workspace!.id, req.user!.id); // 404s if not found or not owned by the caller
     const { cursor, limit } = req.query as unknown as z.infer<typeof messagesQuerySchema>;
 
     // Deliberately NOT cached: an active session's messages change on
@@ -182,7 +182,7 @@ router.post(
 router.get(
   '/:id/debrief',
   asyncHandler(async (req, res) => {
-    const debrief = await debriefService.getDebrief(req.params.id, req.workspace!.id);
+    const debrief = await debriefService.getDebrief(req.params.id, req.workspace!.id, req.user!.id);
     res.json({ debrief });
   })
 );
@@ -242,11 +242,15 @@ router.get(
   asyncHandler(async (req, res) => {
     const { data: retrySession } = await supabaseAdmin()
       .from('practice_sessions')
-      .select('id, retry_of_session_id')
+      .select('id, user_id, retry_of_session_id')
       .eq('id', req.params.id)
       .eq('workspace_id', req.workspace!.id)
       .single();
-    if (!retrySession?.retry_of_session_id) {
+    if (!retrySession) throw ApiError.notFound('Session not found.');
+    if (retrySession.user_id !== req.user!.id) {
+      throw ApiError.forbidden('You can only view comparisons for your own sessions.');
+    }
+    if (!retrySession.retry_of_session_id) {
       throw ApiError.badRequest('This session is not a retry of another session.');
     }
     const { data: comparison } = await supabaseAdmin()
@@ -264,6 +268,12 @@ router.post(
     body: z.object({ goal_type: z.string(), custom_text: z.string().max(300).optional() }),
   }),
   asyncHandler(async (req, res) => {
+    // SECURITY FIX: this route previously had NO authorization check on
+    // session_id at all — not workspace-scoped, not user-scoped — meaning
+    // any authenticated user could set the goal on any session in the
+    // entire system by ID. getSessionById enforces both.
+    await sessionService.getSessionById(req.params.id, req.workspace!.id, req.user!.id);
+
     await supabaseAdmin().from('session_goals').upsert(
       { session_id: req.params.id, goal_type: req.body.goal_type, custom_text: req.body.custom_text ?? null },
       { onConflict: 'session_id' }
@@ -276,7 +286,7 @@ router.post(
   '/:id/attachments',
   validate({ body: attachmentsSchema }),
   asyncHandler(async (req, res) => {
-    const session = await sessionService.getSessionById(req.params.id, req.workspace!.id);
+    const session = await sessionService.getSessionById(req.params.id, req.workspace!.id, req.user!.id);
     if (session.status !== 'active') throw ApiError.conflict('Attachments can only be added to an active session.');
 
     // Attach to a lightweight system message marking the share point in the
@@ -309,6 +319,12 @@ router.post(
 router.get(
   '/:id/attachments',
   asyncHandler(async (req, res) => {
+    // SECURITY FIX: this route previously had NO authorization check on
+    // session_id — not workspace-scoped, not user-scoped — meaning any
+    // authenticated user in the system could enumerate attachment
+    // metadata for any session ID, regardless of workspace membership.
+    await sessionService.getSessionById(req.params.id, req.workspace!.id, req.user!.id);
+
     const { data } = await supabaseAdmin()
       .from('session_message_attachments')
       .select('upload_id, message_id, uploads(original_filename, mime_type, size_bytes)')

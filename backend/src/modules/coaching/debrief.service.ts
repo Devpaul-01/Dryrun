@@ -50,14 +50,23 @@ export async function runDebriefGeneration(sessionId: string, workspaceId: strin
   log.info({ sessionId }, 'Debrief generated');
 }
 
-export async function getDebrief(sessionId: string, workspaceId: string) {
+/**
+ * SECURITY FIX: matches the same gap closed in session.service.ts's
+ * getSessionById — this was scoped by workspace_id alone, letting any
+ * workspace member read another member's debrief (strength/improvement/
+ * coachable_moment) by session ID.
+ */
+export async function getDebrief(sessionId: string, workspaceId: string, requestingUserId: string) {
   const { data: session } = await supabaseAdmin()
     .from('practice_sessions')
-    .select('id')
+    .select('id, user_id')
     .eq('id', sessionId)
     .eq('workspace_id', workspaceId)
     .single();
   if (!session) throw ApiError.notFound('Session not found.');
+  if (session.user_id !== requestingUserId) {
+    throw ApiError.forbidden('You can only view debriefs for your own sessions.');
+  }
 
   const { data } = await supabaseAdmin().from('session_debriefs').select('*').eq('session_id', sessionId).maybeSingle();
   return data ?? null;
