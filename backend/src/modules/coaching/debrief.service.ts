@@ -2,19 +2,9 @@ import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
 import { generateDebrief } from '../ai/ai.service';
 import { createLogger } from '../../config/logger';
+import { buildSessionTranscript } from './transcript';
 
 const log = createLogger('debrief-service');
-
-async function buildTranscript(sessionId: string): Promise<string> {
-  const { data: messages } = await supabaseAdmin()
-    .from('session_messages')
-    .select('role, content')
-    .eq('session_id', sessionId)
-    .neq('role', 'system')
-    .order('sequence_index', { ascending: true });
-
-  return (messages ?? []).map((m) => `${m.role === 'user' ? 'Founder' : 'Prospect'}: ${m.content}`).join('\n');
-}
 
 /**
  * Called by the generate_debrief background worker. Idempotent by design —
@@ -22,7 +12,7 @@ async function buildTranscript(sessionId: string): Promise<string> {
  * row (upsert on session_id), so a retried job never produces duplicates.
  */
 export async function runDebriefGeneration(sessionId: string, workspaceId: string): Promise<void> {
-  const transcript = await buildTranscript(sessionId);
+  const transcript = await buildSessionTranscript(sessionId);
   const { data: goal } = await supabaseAdmin()
     .from('session_goals')
     .select('goal_type, custom_text, goal_achieved')
@@ -198,11 +188,12 @@ export async function exportSessionData(
 
 /**
  * Renders the same export payload as a plain-text transcript — the same
- * "Founder: ... / Prospect: ..." format already used consistently across
- * debrief/scoring/playbook prompt-building (buildTranscript in this file,
- * scoring.service.ts, playbook.service.ts), so a downloaded transcript
- * reads the same way this product internally represents a conversation
- * everywhere else.
+ * "Founder: ... / Prospect: ..." format used by transcript.ts's shared
+ * buildSessionTranscript() (used across debrief/scoring/playbook prompt-
+ * building), so a downloaded transcript reads the same way this product
+ * internally represents a conversation everywhere else. This function
+ * itself isn't a duplicate of that helper — it formats an already-fetched
+ * SessionExportPayload.messages array, not a fresh session_messages query.
  */
 export function renderSessionExportAsText(payload: SessionExportPayload): string {
   const lines: string[] = [];

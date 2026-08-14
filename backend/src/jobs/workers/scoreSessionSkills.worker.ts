@@ -1,5 +1,5 @@
 import { Job } from 'bullmq';
-import { runSkillScoring } from '../../modules/coaching/scoring.service';
+import { runSkillScoring, computeSessionComparison } from '../../modules/coaching/scoring.service';
 import { checkAndAwardBadges } from '../../modules/coaching/badges.service';
 import { publishStatus } from '../../realtime/channels';
 import { enqueue } from '../queues';
@@ -12,7 +12,7 @@ export async function scoreSessionSkillsHandler(job: Job<{ sessionId: string; wo
 
   const { data: session } = await supabaseAdmin()
     .from('practice_sessions')
-    .select('user_id, scenario_type')
+    .select('user_id, scenario_type, retry_of_session_id')
     .eq('id', sessionId)
     .single();
 
@@ -21,5 +21,15 @@ export async function scoreSessionSkillsHandler(job: Job<{ sessionId: string; wo
     await checkAndAwardBadges(session.user_id, workspaceId, session.scenario_type);
     await enqueue('ai-derivative', 'recompute_skill_trend', { userId: session.user_id, workspaceId });
     await enqueue('ai-derivative', 'recompute_curriculum', { userId: session.user_id, workspaceId });
+
+    // If this session is a retry, its own scoring is now available —
+    // attempt the comparison now rather than waiting for someone to poll
+    // GET /:id/comparison. computeSessionComparison returns null (not an
+    // error) if the ORIGINAL session isn't scored for some reason, which
+    // this call site doesn't need to handle specially — GET /:id/comparison
+    // will just recompute on-demand later if this attempt comes back empty.
+    if (session.retry_of_session_id) {
+      await computeSessionComparison(sessionId, workspaceId);
+    }
   }
 }

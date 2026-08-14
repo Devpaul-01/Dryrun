@@ -77,6 +77,10 @@ export const playbookResponseSchema = z.object({
   key_insight: z.string().min(1),
 });
 
+export const sessionComparisonResponseSchema = z.object({
+  summary: z.string().min(1).max(500),
+});
+
 /**
  * Strips markdown code fences an LLM sometimes wraps JSON in, then parses
  * and validates against the given schema. Throws on any failure — callers

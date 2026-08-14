@@ -2,16 +2,11 @@ import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
 import { generatePlaybookContent } from '../ai/ai.service';
 import { randomBytes } from 'crypto';
+import { buildSessionTranscript } from './transcript';
 
 async function bestTranscriptFor(personaId: string | undefined, sessionId: string | undefined, workspaceId: string) {
   if (sessionId) {
-    const { data: messages } = await supabaseAdmin()
-      .from('session_messages')
-      .select('role, content')
-      .eq('session_id', sessionId)
-      .neq('role', 'system')
-      .order('sequence_index', { ascending: true });
-    return (messages ?? []).map((m) => `${m.role === 'user' ? 'Founder' : 'Prospect'}: ${m.content}`).join('\n');
+    return buildSessionTranscript(sessionId);
   }
 
   // Fall back to the highest-scoring recent session against this persona.
@@ -26,13 +21,7 @@ async function bestTranscriptFor(personaId: string | undefined, sessionId: strin
 
   if (!best) throw ApiError.badRequest('No completed session found to generate a playbook from.');
 
-  const { data: messages } = await supabaseAdmin()
-    .from('session_messages')
-    .select('role, content')
-    .eq('session_id', best.session_id)
-    .neq('role', 'system')
-    .order('sequence_index', { ascending: true });
-  return (messages ?? []).map((m) => `${m.role === 'user' ? 'Founder' : 'Prospect'}: ${m.content}`).join('\n');
+  return buildSessionTranscript(best.session_id);
 }
 
 export async function generatePlaybook(input: {

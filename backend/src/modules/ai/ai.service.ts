@@ -6,6 +6,7 @@ import {
   buildDebriefPrompt,
   buildScoringPrompt,
   buildPlaybookPrompt,
+  buildSessionComparisonPrompt,
   CURRENT_PROMPT_VERSION,
 } from './promptBuilder';
 import {
@@ -14,6 +15,7 @@ import {
   debriefResponseSchema,
   scoringResponseSchema,
   playbookResponseSchema,
+  sessionComparisonResponseSchema,
   parseAndValidate,
   LiveTurnResponse,
 } from './outputValidator';
@@ -177,4 +179,18 @@ export async function generatePlaybookContent(
     maxTokens: 800,
   });
   return parseAndValidate(playbookResponseSchema, result.content);
+}
+
+export async function generateSessionComparisonSummary(
+  workspaceId: string,
+  input: Parameters<typeof buildSessionComparisonPrompt>[0]
+) {
+  const { systemPrompt, messages } = buildSessionComparisonPrompt(input);
+  const result = await callWithFallback('session_comparison', workspaceId, {
+    systemPrompt,
+    messages,
+    temperature: 0.6,
+    maxTokens: 150,
+  });
+  return parseAndValidate(sessionComparisonResponseSchema, result.content);
 }
