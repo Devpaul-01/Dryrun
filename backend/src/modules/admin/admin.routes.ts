@@ -6,6 +6,7 @@ import { supabaseAdmin } from '../../config/supabase';
 import { setConfig } from '../../config/systemConfig';
 import { getQueue, retryJob, getAllQueueDepths, QueueName } from '../../jobs/queues';
 import { fetchDeadLetterPage } from '../../jobs/deadLetterPagination';
+import { adminActionRateLimit } from '../../middleware/rateLimit';
 
 const router = Router();
 
@@ -41,6 +42,7 @@ router.get(
 
 router.post(
   '/jobs/:id/retry',
+  adminActionRateLimit,
   validate({ body: z.object({ queue: z.string() }) }),
   asyncHandler(async (req, res) => {
     await retryJob(req.body.queue, req.params.id);
@@ -75,6 +77,7 @@ router.get(
 
 router.patch(
   '/system-config/:key',
+  adminActionRateLimit,
   validate({ body: z.object({ value: z.unknown() }) }),
   asyncHandler(async (req, res) => {
     await setConfig(req.params.key, req.body.value, req.user!.id);

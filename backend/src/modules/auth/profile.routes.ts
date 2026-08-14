@@ -4,17 +4,19 @@ import { asyncHandler } from '../../lib/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
-import { enqueue } from '../../jobs/queues';
 
+/**
+ * Split out of the original user.routes.ts (item #14, router
+ * refactoring): account-profile actions (update, soft-delete) are a
+ * distinct concern from notification preferences and data export, which
+ * now live in notificationPreferences.routes.ts and export.routes.ts
+ * respectively. All three are still mounted under /api/v1/user in
+ * app.ts, so the public route paths are unchanged.
+ */
 const router = Router();
 
 const updateUserSchema = z.object({
   display_name: z.string().min(1).max(120).optional(),
-});
-
-const notificationPrefsSchema = z.object({
-  weekly_summary_enabled: z.boolean().optional(),
-  async_ready_push_enabled: z.boolean().optional(),
 });
 
 router.patch(
@@ -65,40 +67,6 @@ router.delete(
       metadata: {},
     });
     res.json({ success: true, message: 'Account scheduled for deletion. You have 14 days to recover it by logging back in.' });
-  })
-);
-
-router.get(
-  '/notification-preferences',
-  asyncHandler(async (req, res) => {
-    const { data } = await supabaseAdmin()
-      .from('notification_preferences')
-      .select('*')
-      .eq('user_id', req.user!.id)
-      .maybeSingle();
-    res.json({ preferences: data ?? { weekly_summary_enabled: true, async_ready_push_enabled: false } });
-  })
-);
-
-router.patch(
-  '/notification-preferences',
-  validate({ body: notificationPrefsSchema }),
-  asyncHandler(async (req, res) => {
-    const { data, error } = await supabaseAdmin()
-      .from('notification_preferences')
-      .upsert({ user_id: req.user!.id, ...req.body }, { onConflict: 'user_id' })
-      .select('*')
-      .single();
-    if (error) throw ApiError.internal('Failed to update preferences.');
-    res.json({ preferences: data });
-  })
-);
-
-router.get(
-  '/export',
-  asyncHandler(async (req, res) => {
-    const jobId = await enqueue('maintenance', 'export_user_data', { userId: req.user!.id });
-    res.status(202).json({ job_id: jobId, message: 'Your export is being prepared. You will be notified when it is ready.' });
   })
 );
 

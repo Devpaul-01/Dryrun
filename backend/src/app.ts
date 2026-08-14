@@ -14,13 +14,18 @@ import { defaultRateLimit } from './middleware/rateLimit';
 
 import authRoutes from './modules/auth/auth.routes';
 import emailHookRoutes from './modules/auth/emailHook.routes';
-import userRoutes from './modules/auth/user.routes';
+import profileRoutes from './modules/auth/profile.routes';
+import notificationPreferencesRoutes from './modules/auth/notificationPreferences.routes';
+import exportRoutes from './modules/auth/export.routes';
 import workspaceRoutes from './modules/workspace/workspace.routes';
 import onboardingRoutes from './modules/practice/onboarding.routes';
 import dashboardRoutes from './modules/practice/dashboard.routes';
 import sessionRoutes from './modules/practice/session.routes';
 import personaRoutes from './modules/practice/persona.routes';
-import coachingRoutes, { publicPlaybookRouter } from './modules/coaching/coaching.routes';
+import playbookRoutes, { publicPlaybookRouter } from './modules/coaching/playbook.routes';
+import badgesRoutes from './modules/coaching/badges.routes';
+import skillTrendRoutes from './modules/coaching/skillTrend.routes';
+import curriculumRoutes from './modules/coaching/curriculum.routes';
 import billingRoutes from './modules/billing/billing.routes';
 import webhookRoutes from './modules/billing/webhook.routes';
 import uploadRoutes from './modules/files/upload.routes';
@@ -82,13 +87,18 @@ app.use('/api/v1/billing/webhooks', webhookRoutes); // provider-signature-verifi
 // Authenticated routes: steps 4-5 (authenticate, resolveWorkspace).
 const authed = [authenticate, resolveWorkspace, defaultRateLimit];
 
-app.use('/api/v1/user', authenticate, userRoutes); // no workspace context needed for account-level actions
+app.use('/api/v1/user', authenticate, profileRoutes); // exposes PATCH/DELETE /me — split from user.routes.ts (item #14)
+app.use('/api/v1/user', authenticate, notificationPreferencesRoutes); // exposes /notification-preferences
+app.use('/api/v1/user', authenticate, exportRoutes); // exposes /export
 app.use('/api/v1/workspaces', ...authed, workspaceRoutes);
 app.use('/api/v1/onboarding', ...authed, onboardingRoutes);
 app.use('/api/v1/dashboard', ...authed, dashboardRoutes);
 app.use('/api/v1/sessions', ...authed, sessionRoutes);
 app.use('/api/v1', ...authed, personaRoutes); // exposes /scenarios and /personas
-app.use('/api/v1', ...authed, coachingRoutes); // exposes /playbooks, /badges, /skill-trend, /curriculum
+app.use('/api/v1', ...authed, playbookRoutes); // exposes /playbooks (split from coaching.routes.ts, see item #14)
+app.use('/api/v1', ...authed, badgesRoutes); // exposes /badges
+app.use('/api/v1', ...authed, skillTrendRoutes); // exposes /skill-trend, /skill-trend/goals
+app.use('/api/v1', ...authed, curriculumRoutes); // exposes /curriculum/current, /curriculum/dismiss
 app.use('/api/v1/billing', ...authed, billingRoutes);
 app.use('/api/v1/uploads', ...authed, uploadRoutes);
 app.use('/api/v1/notifications', ...authed, notificationsRoutes);

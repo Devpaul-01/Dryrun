@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../../lib/asyncHandler';
 import { validate } from '../../middleware/validate';
+import { uploadRateLimit } from '../../middleware/rateLimit';
 import * as uploadService from './upload.service';
 
 const router = Router();
@@ -25,6 +26,7 @@ const signedUrlSchema = z.object({
  */
 router.post(
   '/signed-url',
+  uploadRateLimit,
   validate({ body: signedUrlSchema }),
   asyncHandler(async (req, res) => {
     const result = await uploadService.createSignedUploadUrl({
@@ -38,6 +40,7 @@ router.post(
 
 router.post(
   '/:id/complete',
+  uploadRateLimit,
   asyncHandler(async (req, res) => {
     const result = await uploadService.completeUpload(req.params.id, req.workspace!.id);
     res.json(result);
