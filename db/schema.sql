@@ -296,6 +296,15 @@ create table persona_sources (
   extracted_text          text,
   status                  persona_source_status not null default 'pending',
   contains_flagged_pii    boolean not null default false,
+  -- The scenario type this ingestion request was made for (see
+  -- migrations/0001_persona_sources_scenario_type.sql). Nullable: rows
+  -- created before that migration have no value, and this column is only
+  -- consumed by the worker chain going forward, not backfilled. Durable
+  -- source of truth for scenario_type across the persona.service.ts ->
+  -- extractPersonaSource.worker.ts -> avScanUpload.worker.ts ->
+  -- synthesizePersona.worker.ts ingestion chain, instead of relying on the
+  -- value surviving intact across three separate BullMQ job-payload hops.
+  scenario_type           text,
   created_at              timestamptz not null default now()
 );
 

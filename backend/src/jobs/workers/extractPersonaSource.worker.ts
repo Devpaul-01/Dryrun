@@ -11,12 +11,22 @@ const log = createLogger('extract-persona-source-worker');
 const PII_PATTERN = /@[\w.-]+\.\w+|\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/; // email or phone-like patterns
 
 export async function extractPersonaSourceHandler(
-  job: Job<{ personaId: string; personaSourceId: string; workspaceId: string; scenarioType: string; sourceKind: string }>
+  job: Job<{ personaId: string; personaSourceId: string; workspaceId: string; scenarioType?: string; sourceKind: string }>
 ): Promise<void> {
-  const { personaId, personaSourceId, workspaceId, scenarioType, sourceKind } = job.data;
+  const { personaId, personaSourceId, workspaceId, sourceKind } = job.data;
 
   const { data: source } = await supabaseAdmin().from('persona_sources').select('*').eq('id', personaSourceId).single();
   if (!source) return;
+
+  // Prefer the durable scenario_type stored on the persona_sources row
+  // itself (set at creation time by persona.service.ts) over the job
+  // payload's copy — this is the source of truth the DB-lookup design in
+  // audit finding C1a moved to, so a value on the row always wins. Falling
+  // back to job.data.scenarioType covers a persona_sources row written
+  // before db/migrations/0001_persona_sources_scenario_type.sql landed,
+  // where the column will be null but the payload (on the pasted_text/url
+  // paths, which always carried this field correctly) may still have it.
+  const scenarioType = source.scenario_type ?? job.data.scenarioType ?? '';
 
   try {
     let extractedText = '';

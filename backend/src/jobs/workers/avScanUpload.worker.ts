@@ -35,9 +35,20 @@ export async function avScanUploadHandler(job: Job<{ uploadId: string; workspace
   if (upload.purpose === 'persona_source') {
     // The corresponding persona_sources row is created by the route/service
     // that initiated the persona-from-source flow; find and enqueue extraction.
+    //
+    // FIX (audit finding C1a): this enqueue previously omitted scenarioType
+    // entirely, since this generic upload-completion worker has no
+    // persona-specific context of its own. scenario_type is now read
+    // directly off the persona_sources row (set at creation time by
+    // persona.service.ts's createPersonaFromSource) rather than threaded
+    // through the upload pipeline's job payload — see
+    // db/migrations/0001_persona_sources_scenario_type.sql. This avoids
+    // coupling the generic upload system to persona-specific fields while
+    // still closing the gap: every upload-originated persona previously
+    // synthesized with an undefined scenario type.
     const { data: source } = await supabaseAdmin()
       .from('persona_sources')
-      .select('id, persona_id')
+      .select('id, persona_id, scenario_type')
       .eq('raw_reference', uploadId)
       .maybeSingle();
     if (source) {
@@ -45,6 +56,7 @@ export async function avScanUploadHandler(job: Job<{ uploadId: string; workspace
         personaId: source.persona_id,
         personaSourceId: source.id,
         workspaceId,
+        scenarioType: source.scenario_type ?? undefined,
         sourceKind: 'upload',
       });
     }

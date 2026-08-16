@@ -43,12 +43,22 @@ export async function initiateCheckout(workspaceId: string, planKey: string, use
     redirectUrl: `${env.frontendUrl}/billing/callback`,
   });
 
+  // FIX (audit finding C2): pending_tx_ref is now set at insert time, using
+  // the exact provider transaction reference initiateCharge() generated
+  // (flutterwave.provider.ts's initiateCharge builds this as
+  // `dryrun-${planKey}-${Date.now()}`). This is what lets confirmCheckout
+  // below match a verified transaction back to the EXACT pending
+  // subscription row it belongs to — see that function's own comment and
+  // db/schema.sql's uq_subscriptions_pending_tx_ref partial unique index,
+  // which already existed for this purpose but was never populated by this
+  // insert until now.
   await supabaseAdmin().from('subscriptions').insert({
     workspace_id: workspaceId,
     plan_id: plan.id,
     provider: provider.name,
     provider_customer_id: customer.providerCustomerId,
     status: 'incomplete',
+    pending_tx_ref: checkout.providerTxRef,
   });
 
   return checkout;
@@ -63,14 +73,25 @@ export async function confirmCheckout(workspaceId: string, providerTxRef: string
   const periodEnd = new Date(now);
   periodEnd.setMonth(periodEnd.getMonth() + 1);
 
+  // FIX (audit finding C2): this used to match "the most recent incomplete
+  // subscription for this workspace" — a real race condition if a
+  // workspace ever has more than one incomplete checkout attempt in
+  // flight at once (a double-clicked "Upgrade" button, or a retried
+  // checkout after an abandoned first attempt, both realistic on a mobile
+  // client). Confirming the OLDER providerTxRef could activate whichever
+  // subscription row happened to be most recently created, not the one
+  // actually being confirmed. Fixed by matching on the exact
+  // pending_tx_ref set at checkout-creation time above, the same fix
+  // already correctly applied to processWebhookEvent.worker.ts's
+  // reconciliation path — workspace_id and status are kept as additional
+  // guards, not the primary match.
   const { data: sub } = await supabaseAdmin()
     .from('subscriptions')
     .select('id, plan_id')
     .eq('workspace_id', workspaceId)
     .eq('status', 'incomplete')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
+    .eq('pending_tx_ref', providerTxRef)
+    .maybeSingle();
 
   if (!sub) throw ApiError.notFound('No pending checkout found for this workspace.');
 
@@ -80,6 +101,10 @@ export async function confirmCheckout(workspaceId: string, providerTxRef: string
       status: 'active',
       current_period_start: now.toISOString(),
       current_period_end: periodEnd.toISOString(),
+      // Cleared on activation, mirroring processWebhookEvent.worker.ts's
+      // existing correct behavior — a pending_tx_ref that's already been
+      // consumed should never be matchable again.
+      pending_tx_ref: null,
     })
     .eq('id', sub.id);
 

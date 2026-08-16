@@ -7,16 +7,57 @@ import { createLogger } from '../../config/logger';
 const log = createLogger('synthesize-persona-worker');
 
 export async function synthesizePersonaHandler(
-  job: Job<{ personaId: string; personaSourceId: string; workspaceId: string; scenarioType: string }>
+  job: Job<{ personaId: string; personaSourceId: string; workspaceId: string; scenarioType?: string }>
 ): Promise<void> {
-  const { personaId, personaSourceId, workspaceId, scenarioType } = job.data;
+  const { personaId, personaSourceId, workspaceId } = job.data;
 
-  const { data: source } = await supabaseAdmin().from('persona_sources').select('extracted_text').eq('id', personaSourceId).single();
+  // FIX (audit finding C1): this used to resolve practice_profiles by
+  // workspace_id alone. practice_profiles has a unique(user_id,
+  // workspace_id) constraint — a single workspace can legitimately have
+  // multiple rows, one per member — so `.limit(1)` with no user_id filter
+  // picked an arbitrary member's profile. In any workspace with 2+ members
+  // who had each completed Instant Setup, persona generation for one user
+  // could silently ground itself in a different member's product/audience
+  // description. Fixed by resolving the initiating user from the persona
+  // row itself: created_by_user_id is set at persona creation time
+  // (persona.service.ts's createPersonaFromSource) and requires no schema
+  // change or job-payload threading to look up here, since every path
+  // through this worker already carries personaId.
+  //
+  // updated_at is captured in the same read and used below for the
+  // optimistic-concurrency check (audit finding M2).
+  const { data: personaRow, error: personaRowError } = await supabaseAdmin()
+    .from('personas')
+    .select('created_by_user_id, updated_at')
+    .eq('id', personaId)
+    .single();
+
+  if (personaRowError || !personaRow) {
+    log.error({ err: personaRowError, personaId }, 'Persona synthesis: could not resolve persona row — aborting');
+    await publishStatus('persona', personaId, 'synthesis_failed', { personaId });
+    return;
+  }
+
+  const capturedUpdatedAt = personaRow.updated_at;
+
+  // scenario_type is read from persona_sources (durable, set at ingestion
+  // time) rather than trusted solely from the job payload — see the
+  // matching comment in extractPersonaSource.worker.ts and audit finding
+  // C1a. Falling back to job.data.scenarioType covers the pasted_text path,
+  // which enqueues this job directly without going through
+  // extractPersonaSource.worker.ts's own resolution step.
+  const { data: source } = await supabaseAdmin()
+    .from('persona_sources')
+    .select('extracted_text, scenario_type')
+    .eq('id', personaSourceId)
+    .single();
+  const scenarioType = source?.scenario_type ?? job.data.scenarioType ?? '';
+
   const { data: practiceProfile } = await supabaseAdmin()
     .from('practice_profiles')
     .select('product_description, target_audience')
     .eq('workspace_id', workspaceId)
-    .limit(1)
+    .eq('user_id', personaRow.created_by_user_id)
     .maybeSingle();
 
   try {
@@ -30,7 +71,18 @@ export async function synthesizePersonaHandler(
       sourceText: source?.extracted_text ?? undefined,
     });
 
-    await supabaseAdmin()
+    // FIX (audit finding M2): this update used to be unconditional
+    // (.eq('id', personaId) only). If a user manually edited the
+    // "Generating…" placeholder via PATCH /personas/:id while synthesis
+    // was still in flight, this write would silently overwrite that edit
+    // once the background job completed. Fixed with an optimistic-
+    // concurrency check against the updated_at value captured above, at
+    // the start of this handler, before generatePersona()'s AI call ran —
+    // any PATCH that lands during that window will have advanced
+    // updated_at (personas has an `updated_at` trigger, see
+    // db/schema.sql's set_updated_at()), so this conditional update will
+    // match zero rows and the user's own edit wins.
+    const { data: updated, error: updateError } = await supabaseAdmin()
       .from('personas')
       .update({
         name: generated.name,
@@ -41,7 +93,31 @@ export async function synthesizePersonaHandler(
         communication_style: generated.communication_style,
         hidden_motivations: generated.hidden_motivations,
       })
-      .eq('id', personaId);
+      .eq('id', personaId)
+      .eq('updated_at', capturedUpdatedAt)
+      .select('id')
+      .maybeSingle();
+
+    if (updateError) {
+      log.error({ err: updateError, personaId }, 'Persona synthesis: final update failed');
+      await publishStatus('persona', personaId, 'synthesis_failed', { personaId });
+      return;
+    }
+
+    if (!updated) {
+      // The optimistic-concurrency check didn't match — someone (or
+      // something) else updated this persona after we captured
+      // capturedUpdatedAt. Per this fix's intent, the user's own concurrent
+      // edit wins: skip overwriting it and skip the ready_for_review
+      // broadcast, since re-announcing "ready for review" over content the
+      // user already edited would be misleading.
+      log.warn(
+        { personaId },
+        'Persona synthesis: skipped final write — persona was modified concurrently during synthesis'
+      );
+      await supabaseAdmin().from('persona_sources').update({ status: 'synthesized' }).eq('id', personaSourceId);
+      return;
+    }
 
     await supabaseAdmin().from('persona_sources').update({ status: 'synthesized' }).eq('id', personaSourceId);
     await publishStatus('persona', personaId, 'ready_for_review', { personaId });
