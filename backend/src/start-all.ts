@@ -3,6 +3,7 @@ import app from './app';
 import { env } from './config/env';
 import { createLogger } from './config/logger';
 import { startAllWorkers, shutdownWorkers } from './jobs';
+import { shutdownPostHog } from './modules/analytics/posthog.client';
 
 /**
  * Combined API + worker entrypoint — runs the Express server AND all five
@@ -80,6 +81,19 @@ async function main(): Promise<void> {
 
     await shutdownWorkers(workers);
     log.info('All workers drained and closed');
+
+    // FIX (audit finding C4): this shutdown sequence already correctly
+    // drained the HTTP listener and workers, but never flushed PostHog —
+    // buffered analytics events were lost on every deploy even in this
+    // combined mode, which otherwise has the most complete shutdown
+    // handling of the three entrypoints. Matches the same flush now added
+    // to server.ts's standalone shutdown path.
+    try {
+      await shutdownPostHog();
+      log.info('PostHog client flushed and shut down');
+    } catch (err) {
+      log.warn({ err }, 'Error while flushing PostHog on shutdown (continuing shutdown regardless)');
+    }
 
     process.exit(0);
   };
