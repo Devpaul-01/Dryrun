@@ -327,6 +327,13 @@ create table practice_sessions (
   started_at                timestamptz,
   completed_at              timestamptz,
   search_vector             tsvector, -- backs session.routes.ts's `.textSearch('search_vector', search)`
+  -- Atomic message-sequence counter (see
+  -- migrations/0002_atomic_session_sequence.sql). Incremented exclusively
+  -- via the allocate_session_sequence_index() function below — never read
+  -- via COUNT(session_messages) and never written directly from
+  -- application code, since that read-then-use pattern is exactly the
+  -- race this column replaces.
+  next_sequence_index       integer not null default 0,
   created_at                timestamptz not null default now(),
   updated_at                timestamptz not null default now()
 );
@@ -684,6 +691,21 @@ begin
   new.updated_at = now();
   return new;
 end;
+$$;
+
+-- =============================================================================
+-- Atomic session-message sequence allocation (see
+-- migrations/0002_atomic_session_sequence.sql for the full rationale)
+-- =============================================================================
+
+create or replace function allocate_session_sequence_index(p_session_id uuid)
+returns integer
+language sql
+as $$
+  update practice_sessions
+  set next_sequence_index = next_sequence_index + 1
+  where id = p_session_id
+  returning next_sequence_index - 1;
 $$;
 
 do $$

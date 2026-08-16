@@ -8,6 +8,7 @@ import { messageRateLimit } from '../../middleware/rateLimit';
 import { fetchCursorPage } from '../../lib/cursorPagination';
 import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
+import { withIdempotency } from '../../lib/idempotency';
 import * as sessionService from './session.service';
 import * as debriefService from '../coaching/debrief.service';
 import * as scoringService from '../coaching/scoring.service';
@@ -129,13 +130,28 @@ router.post(
   messageRateLimit,
   validate({ body: sendMessageSchema }),
   asyncHandler(async (req, res) => {
-    const result = await sessionService.sendMessage({
-      sessionId: req.params.id,
-      workspaceId: req.workspace!.id,
-      userId: req.user!.id,
-      content: req.body.content,
-      attachmentUploadIds: req.body.attachment_upload_ids,
-    });
+    // FIX (audit finding H1): the atomic sequence-index allocation
+    // (session.service.ts's nextSequenceIndex) prevents the two-writers-
+    // collide race from ever corrupting sequence_index, but a genuine
+    // client retry of an ALREADY-SUCCEEDED send (the realistic trigger on
+    // a flaky mobile connection — a slow/dropped response before the
+    // client saw the first attempt's result) would, without this,
+    // correctly succeed a SECOND time and record the message twice. An
+    // Idempotency-Key header, mirroring the exact pattern POST /playbooks
+    // already uses, lets a genuine retry return the original result
+    // instead of re-sending. Fully backward compatible: withIdempotency
+    // is a no-op passthrough when no key is supplied, so existing clients
+    // that don't send this header see no behavior change.
+    const idempotencyKey = req.headers['idempotency-key'] as string | undefined;
+    const result = await withIdempotency(idempotencyKey, 'send_session_message', () =>
+      sessionService.sendMessage({
+        sessionId: req.params.id,
+        workspaceId: req.workspace!.id,
+        userId: req.user!.id,
+        content: req.body.content,
+        attachmentUploadIds: req.body.attachment_upload_ids,
+      })
+    );
     res.json(result);
   })
 );
@@ -305,19 +321,19 @@ router.post(
 
     // Attach to a lightweight system message marking the share point in the
     // transcript, so replay can show exactly when a file was shared.
+    //
+    // FIX (audit finding H1): this used to independently re-implement the
+    // exact same COUNT-based sequence_index race nextSequenceIndex() had —
+    // not even reusing that function, a second, separately-racy copy of
+    // the same anti-pattern. Now calls the shared, atomic
+    // sessionService.nextSequenceIndex() instead of duplicating the logic.
     const { data: marker } = await supabaseAdmin()
       .from('session_messages')
       .insert({
         session_id: req.params.id,
         role: 'system',
         content: 'Attachment shared.',
-        sequence_index: await (async () => {
-          const { count } = await supabaseAdmin()
-            .from('session_messages')
-            .select('id', { count: 'exact', head: true })
-            .eq('session_id', req.params.id);
-          return count ?? 0;
-        })(),
+        sequence_index: await sessionService.nextSequenceIndex(req.params.id),
       })
       .select('id')
       .single();

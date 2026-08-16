@@ -505,12 +505,29 @@ export async function retrySession(sessionId: string, workspaceId: string, userI
   return retry;
 }
 
-async function nextSequenceIndex(sessionId: string): Promise<number> {
-  const { count } = await supabaseAdmin()
-    .from('session_messages')
-    .select('id', { count: 'exact', head: true })
-    .eq('session_id', sessionId);
-  return count ?? 0;
+// FIX (audit finding H1): this used to derive the next sequence_index by
+// COUNTing existing session_messages rows for a session — a read-then-use
+// pattern that races under concurrent requests for the same session (a
+// realistic trigger on a mobile app: a client retry after a slow/dropped
+// response, or a double-tap before the send button disables). Two
+// concurrent callers could both read the same count, both compute the
+// same sequence_index, and the second INSERT would fail outright on
+// session_messages' unique(session_id, sequence_index) constraint,
+// surfacing as a generic 500 on the hottest write path in the product.
+// Fixed with allocate_session_sequence_index(), a single atomic
+// UPDATE ... RETURNING wrapped in a Postgres function (see
+// db/migrations/0002_atomic_session_sequence.sql) — the read-modify-write
+// now happens as one indivisible statement at the database level, the
+// same class of fix already applied elsewhere in this codebase via
+// Lua-scripted Redis primitives (config/redis.ts).
+export async function nextSequenceIndex(sessionId: string): Promise<number> {
+  const { data, error } = await supabaseAdmin().rpc('allocate_session_sequence_index', {
+    p_session_id: sessionId,
+  });
+  if (error || data == null) {
+    throw ApiError.internal('Failed to allocate message sequence.');
+  }
+  return data as number;
 }
 
 function clamp(value: number, min: number, max: number): number {
