@@ -63,6 +63,19 @@ export async function attemptRenewalChargeHandler(job: Job<{ subscriptionId: str
           status: 'successful',
           raw_payload: result,
         });
+        // AUDITABILITY FIX (audit finding C5 / instruction requirement):
+        // every other consequential subscription-status transition in this
+        // codebase writes an audit_log entry (activation in
+        // billing.service.ts's confirmCheckout, dunning-exhaustion
+        // cancellation just below in this same file) — a successful
+        // renewal previously did not, despite moving real money.
+        await supabaseAdmin().from('audit_log').insert({
+          workspace_id: sub.workspace_id,
+          action: 'subscription_renewed',
+          target_type: 'subscription',
+          target_id: sub.id,
+          metadata: { amount: result.amount, currency: result.currency, dunningAttempt: attempt },
+        });
         return;
       }
     }

@@ -1,7 +1,7 @@
 import { Worker, Job } from 'bullmq';
 import { redisConnection } from '../config/redis';
 import { createLogger } from '../config/logger';
-import { registerSchedules, dispatchWeeklySummaries } from './scheduler';
+import { registerSchedules, dispatchWeeklySummaries, checkRenewalsDue } from './scheduler';
 import { QueueName } from './queues';
 
 import { generateDebriefHandler } from './workers/generateDebrief.worker';
@@ -49,6 +49,10 @@ const HANDLERS: Record<string, Handler> = {
   sample_ai_scoring_evaluations_for_review: sampleAiScoringEvaluationsHandler,
   export_user_data: exportUserDataHandler,
   dispatch_weekly_summaries: async () => dispatchWeeklySummaries(),
+  // FIX (audit finding C5): dispatches the first attempt_renewal_charge job
+  // for any subscription whose billing period has ended — see
+  // scheduler.ts's checkRenewalsDue for the full architecture rationale.
+  check_renewals_due: async () => checkRenewalsDue(),
 };
 
 const QUEUE_CONCURRENCY: Record<QueueName, number> = {
