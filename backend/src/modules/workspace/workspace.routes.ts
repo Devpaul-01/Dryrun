@@ -5,7 +5,7 @@ import { requireRole } from '../../middleware/requireRole';
 import { entitlement } from '../../middleware/entitlement';
 import { canInviteMember } from '../billing/entitlements';
 import * as workspaceService from './workspace.service';
-import { updateWorkspaceSchema, createInviteSchema, updateMemberRoleSchema, transferOwnershipSchema } from './workspace.schemas';
+import { updateWorkspaceSchema, createInviteSchema, updateMemberRoleSchema, transferOwnershipSchema, switchWorkspaceSchema } from './workspace.schemas';
 import { z } from 'zod';
 import { ApiError } from '../../lib/apiError';
 
@@ -15,6 +15,24 @@ router.get(
   '/current',
   asyncHandler(async (req, res) => {
     const workspace = await workspaceService.getCurrentWorkspace(req.workspace!.id);
+    res.json({ workspace });
+  })
+);
+
+/**
+ * FEATURE (audit finding L3): makes a workspace the caller's persisted
+ * default (users.current_workspace_id), so future requests with no
+ * explicit x-workspace-id header resolve into it — see
+ * workspace.service.ts's switchCurrentWorkspace for the full rationale.
+ * No role gate: switching your own default workspace is a personal
+ * navigation preference, not a privileged workspace-wide mutation, so any
+ * active member (not just owner/admin) may do this for themselves.
+ */
+router.post(
+  '/current/switch',
+  validate({ body: switchWorkspaceSchema }),
+  asyncHandler(async (req, res) => {
+    const workspace = await workspaceService.switchCurrentWorkspace(req.user!.id, req.body.workspace_id);
     res.json({ workspace });
   })
 );

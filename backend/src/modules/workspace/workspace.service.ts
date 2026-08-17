@@ -280,3 +280,62 @@ export async function transferOwnership(workspaceId: string, newOwnerUserId: str
     metadata: { newOwnerUserId },
   });
 }
+
+/**
+ * FEATURE (audit finding L3): closes the gap identified during the
+ * frontend-readiness audit — users.current_workspace_id was previously set
+ * once at signup (ensureProfileAndWorkspace) and never updated afterward
+ * anywhere in the codebase. A user who later joined a second workspace
+ * (via acceptInvite) had no way to make it their new default; every future
+ * request without an explicit x-workspace-id header would keep resolving
+ * to the original signup-time workspace forever.
+ *
+ * SECURITY: the membership check below is the entire security boundary —
+ * userId always comes from the authenticated JWT (never client-suppliable,
+ * see middleware/authenticate.ts), so there is no path to switching on
+ * another user's behalf or to inferring membership in a workspace this
+ * user doesn't belong to. A non-member or nonexistent workspace_id
+ * produces the same 400, giving no signal distinguishing "doesn't exist"
+ * from "exists but you're not in it" — consistent with this codebase's
+ * existing no-enumeration posture (see auth.service.ts's forgotPassword).
+ *
+ * TOKEN/SESSION CONTEXT: Supabase JWTs carry no workspace claim —
+ * authenticate.ts re-reads users.current_workspace_id fresh from the
+ * database on every single authenticated request (never from the token
+ * itself), so updating this one column is both necessary and sufficient;
+ * no token refresh or re-login is required for the switch to take effect
+ * on the very next request.
+ */
+export async function switchCurrentWorkspace(userId: string, targetWorkspaceId: string) {
+  const { data: membership } = await supabaseAdmin()
+    .from('workspace_members')
+    .select('role, status, workspaces(id, name, plan_id)')
+    .eq('user_id', userId)
+    .eq('workspace_id', targetWorkspaceId)
+    .maybeSingle();
+
+  if (!membership || membership.status !== 'active') {
+    throw ApiError.badRequest('You must be an active member of this workspace to switch to it.');
+  }
+
+  const { error: updateError } = await supabaseAdmin()
+    .from('users')
+    .update({ current_workspace_id: targetWorkspaceId })
+    .eq('id', userId);
+  if (updateError) throw ApiError.internal('Failed to switch workspace.');
+
+  // Defensive: covers the case where a prior request cached a
+  // forbidden/negative result for this exact (userId, workspaceId) pair
+  // before this membership existed (e.g. immediately after accepting an
+  // invite) — matches invalidateWorkspaceContextCache's own stated
+  // "correctness matters more than the small extra DB read" philosophy.
+  await invalidateWorkspaceContextCache(userId, targetWorkspaceId);
+
+  const ws = membership.workspaces as unknown as { id: string; name: string; plan_id: string };
+  return {
+    id: ws.id,
+    name: ws.name,
+    planId: ws.plan_id,
+    role: membership.role as 'owner' | 'admin' | 'member',
+  };
+}

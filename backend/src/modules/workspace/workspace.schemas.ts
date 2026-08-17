@@ -16,3 +16,7 @@ export const updateMemberRoleSchema = z.object({
 export const transferOwnershipSchema = z.object({
   newOwnerUserId: z.string().uuid(),
 });
+
+export const switchWorkspaceSchema = z.object({
+  workspace_id: z.string().uuid(),
+});
