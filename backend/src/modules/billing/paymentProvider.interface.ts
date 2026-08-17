@@ -47,5 +47,25 @@ export interface PaymentProvider {
   chargeRenewal(cardToken: string, amount: number, currency: string): Promise<VerificationResult>;
   cancelSubscription(providerSubscriptionId: string): Promise<void>;
   refund(providerTxId: string): Promise<RefundResult>;
-  verifyWebhookSignature(rawBody: string, signatureHeader: string | undefined): boolean;
+  /**
+   * FIX (audit finding L1): the parameter here was previously named
+   * `rawBody` and typed `string`, implying a byte-exact guarantee this
+   * codebase's only current implementation (Flutterwave) neither needs
+   * nor receives — webhook.routes.ts passes an already-parsed-then-
+   * reserialized `JSON.stringify(req.body)`, and flutterwaveProvider's
+   * own implementation never actually reads this parameter at all: it
+   * compares the `verif-hash` header directly against a static
+   * pre-shared secret, with no HMAC-over-body computation. That's not a
+   * live bug for Flutterwave specifically, but the old name/type
+   * implied a contract this codebase doesn't actually uphold today.
+   *
+   * If a FUTURE provider needs true HMAC-over-body verification (unlike
+   * Flutterwave), it will need its own raw-body mount ahead of the
+   * global express.json() middleware — see modules/auth/emailHook.
+   * routes.ts's own header comment for exactly why re-serialized JSON
+   * isn't a safe substitute for the original request bytes, and for the
+   * express.raw() mounting pattern that provider's webhook route would
+   * need to follow (webhook.routes.ts is not currently mounted this way).
+   */
+  verifyWebhookSignature(bodyForVerification: string, signatureHeader: string | undefined): boolean;
 }

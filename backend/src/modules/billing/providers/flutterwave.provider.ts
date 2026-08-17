@@ -109,7 +109,15 @@ export const flutterwaveProvider: PaymentProvider = {
     }
   },
 
-  verifyWebhookSignature(rawBody: string, signatureHeader: string | undefined): boolean {
+  // FIX (audit finding L1): parameter renamed from `rawBody` to match the
+  // interface's renamed parameter — this implementation never reads it at
+  // all (Flutterwave's verif-hash header is compared directly against a
+  // static pre-shared secret, no HMAC-over-body), so the old name's
+  // byte-exact implication was always misleading for this provider
+  // specifically. See paymentProvider.interface.ts's own comment on this
+  // method for the full rationale and what a future HMAC-verifying
+  // provider would need instead.
+  verifyWebhookSignature(_bodyForVerification: string, signatureHeader: string | undefined): boolean {
     if (!signatureHeader) return false;
     // Flutterwave sends a pre-shared hash in the verif-hash header, compared
     // directly (not HMAC-computed from the body) — constant-time compare

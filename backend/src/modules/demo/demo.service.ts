@@ -152,6 +152,11 @@ export async function convertDemo(token: string, email: string, password: string
       communication_style: (demo.persona_snapshot as any).communication_style,
       source_type: 'generated',
       reusable: true,
+      // Explicit rather than relying on the column default (audit finding
+      // L2) — this persona is created synchronously from the demo's
+      // already-complete persona_snapshot, so it's genuinely ready
+      // immediately, same reasoning as createManualPersona.
+      generation_status: 'ready',
     })
     .select('id')
     .single();

@@ -5,16 +5,33 @@ import { createLogger } from '../../config/logger';
 
 const log = createLogger('purge-soft-deleted-worker');
 const GRACE_PERIOD_DAYS = 14;
+const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes — see the heartbeat note below for why a fixed TTL alone isn't the whole story
 
 /**
  * Compliance-relevant job — failures here are alert-worthy, not just logged
  * (architecture doc §11.2). A narrow distributed lock prevents two worker
  * instances from double-processing the same purge batch.
+ *
+ * FIX (audit finding M4): the lock's TTL used to be a single fixed 5
+ * minutes with no refresh — for each candidate user, this handler does a
+ * full extra query for owned workspaces, then a further query PER owned
+ * workspace for active-member count, before the actual delete (a genuine
+ * N×M query pattern, entirely sequential, no batching). If a candidate
+ * batch ever grew large enough that a full run exceeded 5 minutes, the
+ * lock could expire mid-run, letting a second scheduled/retried
+ * invocation start concurrently with the still-running first one — for a
+ * job explicitly described as compliance-relevant, processing hard
+ * account deletion. Fixed with a heartbeat: the lock's TTL is refreshed
+ * after each candidate finishes processing, so its lifetime tracks actual
+ * progress through the batch rather than a single fixed guess made
+ * up front — a batch that's still making progress never loses its lock,
+ * while a genuinely stuck/crashed run still releases the lock naturally
+ * once LOCK_TTL_MS elapses with no refresh.
  */
 export async function purgeSoftDeletedAccountsHandler(_job: Job): Promise<void> {
   const redis = redisConnection();
   const lockKey = 'purge-soft-deleted-accounts-lock';
-  const acquired = await redis.set(lockKey, '1', 'PX', 5 * 60 * 1000, 'NX');
+  const acquired = await redis.set(lockKey, '1', 'PX', LOCK_TTL_MS, 'NX');
   if (!acquired) return;
 
   try {
@@ -53,6 +70,10 @@ export async function purgeSoftDeletedAccountsHandler(_job: Job): Promise<void> 
       }
       if (blocked) {
         log.warn({ userId: user.id }, 'Skipping purge — user is still sole owner of a multi-member workspace');
+        // Heartbeat even on the skip path — this candidate still consumed
+        // real time (the N×M queries above), so the lock's remaining
+        // lifetime should reflect that regardless of outcome.
+        await redis.pexpire(lockKey, LOCK_TTL_MS);
         continue;
       }
 
@@ -61,6 +82,11 @@ export async function purgeSoftDeletedAccountsHandler(_job: Job): Promise<void> 
       await supabaseAdmin().from('users').delete().eq('id', user.id);
       await supabaseAdmin().auth.admin.deleteUser(user.id);
       log.info({ userId: user.id }, 'Hard-purged soft-deleted account');
+
+      // Heartbeat: refresh the lock's TTL now that this candidate is fully
+      // processed, so a long-running batch never loses its lock mid-way
+      // through, while a crashed/stuck run still naturally releases it.
+      await redis.pexpire(lockKey, LOCK_TTL_MS);
     }
   } catch (err) {
     log.error({ err }, 'ALERT: purge_soft_deleted_accounts failed');

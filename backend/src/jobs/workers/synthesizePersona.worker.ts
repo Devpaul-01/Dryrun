@@ -35,6 +35,10 @@ export async function synthesizePersonaHandler(
   if (personaRowError || !personaRow) {
     log.error({ err: personaRowError, personaId }, 'Persona synthesis: could not resolve persona row — aborting');
     await publishStatus('persona', personaId, 'synthesis_failed', { personaId });
+    // Best-effort — if the row itself couldn't be resolved above, this
+    // write may also fail to match, which is fine; the realtime broadcast
+    // already carries the failure signal for this branch.
+    await supabaseAdmin().from('personas').update({ generation_status: 'failed' }).eq('id', personaId);
     return;
   }
 
@@ -92,6 +96,10 @@ export async function synthesizePersonaHandler(
         skepticism_about: generated.skepticism_about,
         communication_style: generated.communication_style,
         hidden_motivations: generated.hidden_motivations,
+        // FIX (audit finding L2): REST polling fallback alongside the
+        // realtime broadcast below — see this file's other status writes
+        // and personas.generation_status's own schema comment.
+        generation_status: 'ready',
       })
       .eq('id', personaId)
       .eq('updated_at', capturedUpdatedAt)
@@ -101,6 +109,7 @@ export async function synthesizePersonaHandler(
     if (updateError) {
       log.error({ err: updateError, personaId }, 'Persona synthesis: final update failed');
       await publishStatus('persona', personaId, 'synthesis_failed', { personaId });
+      await supabaseAdmin().from('personas').update({ generation_status: 'failed' }).eq('id', personaId);
       return;
     }
 
@@ -124,5 +133,6 @@ export async function synthesizePersonaHandler(
   } catch (err) {
     log.error({ err, personaId }, 'Persona synthesis failed');
     await publishStatus('persona', personaId, 'synthesis_failed', { personaId });
+    await supabaseAdmin().from('personas').update({ generation_status: 'failed' }).eq('id', personaId);
   }
 }

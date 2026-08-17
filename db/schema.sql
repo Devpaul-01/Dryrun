@@ -48,6 +48,11 @@ create type message_role as enum ('user', 'buyer', 'system');
 create type persona_source_kind as enum ('pasted_text', 'url', 'upload');
 create type persona_source_status as enum ('pending', 'extracted', 'extraction_failed', 'synthesized');
 create type persona_source_type as enum ('generated', 'combined', 'company_url', 'document');
+-- REST polling fallback alongside the persona:{personaId} realtime channel
+-- (see migrations/0003_persona_generation_status.sql). Default 'ready' —
+-- 'generating' is only ever set explicitly, at persona-from-source
+-- creation time.
+create type persona_generation_status as enum ('generating', 'ready', 'failed');
 
 create type upload_purpose as enum ('persona_source', 'session_context');
 create type upload_status as enum ('uploaded', 'processing', 'processed', 'failed');
@@ -281,6 +286,16 @@ create table personas (
   hidden_motivations      jsonb not null default '[]'::jsonb, -- text[] in practice; jsonb to match AI-generated array shape directly
   source_type             persona_source_type not null default 'generated',
   reusable                boolean not null default true,
+  -- REST polling fallback for persona-from-source generation progress,
+  -- alongside the persona:{personaId} realtime channel — see
+  -- migrations/0003_persona_generation_status.sql. Written by
+  -- persona.service.ts's createPersonaFromSource ('generating', at
+  -- creation), synthesizePersona.worker.ts ('ready' on success, 'failed'
+  -- on error), and persona.service.ts's updatePersona ('ready' — a
+  -- successful manual edit resolves generation from the product's
+  -- perspective, same reasoning as the optimistic-concurrency fix on the
+  -- synthesis worker's own final write).
+  generation_status       persona_generation_status not null default 'ready',
   deleted_at              timestamptz, -- soft-delete (personas.deletePersona)
   created_at              timestamptz not null default now(),
   updated_at              timestamptz not null default now()

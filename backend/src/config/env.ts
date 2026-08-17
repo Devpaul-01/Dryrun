@@ -27,6 +27,33 @@ function optionalInt(name: string, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+/**
+ * FIX (audit finding M6): AI provider keys previously bypassed this module
+ * entirely — fallbackChain.ts and extraction.service.ts both read
+ * `process.env.CEREBRAS_API_KEY_${i}` / `GROQ_API_KEY_${i}` /
+ * `OPENAI_API_KEY_${i}` directly, contradicting this file's own header
+ * comment ("nothing reaches into process.env directly anywhere else in
+ * the codebase"). These keys don't fit env.ts's existing flat-property
+ * shape naturally (each provider supports a variable NUMBER of keys, 1
+ * through 5, and every individual key is genuinely optional — a
+ * deployment may configure zero, one, or up to five keys per provider
+ * family, so `required()` is the wrong tool here). This accessor keeps
+ * that same optional, variable-count shape while still routing every
+ * read through this module, closing the "these specific keys aren't
+ * validated the way everything else is" gap: a missing/malformed key
+ * previously only surfaced as a runtime failure deep inside a provider
+ * call; callers can now see exactly which numbered keys are actually
+ * configured for a given provider family without reaching into
+ * process.env themselves.
+ */
+function numberedProviderKeys(prefix: 'CEREBRAS_API_KEY' | 'GROQ_API_KEY' | 'OPENAI_API_KEY'): (string | undefined)[] {
+  const keys: (string | undefined)[] = [];
+  for (let i = 1; i <= 5; i++) {
+    keys.push(optional(`${prefix}_${i}`) || undefined);
+  }
+  return keys;
+}
+
 export const env = {
   nodeEnv: optional('NODE_ENV', 'development'),
   isProduction: optional('NODE_ENV', 'development') === 'production',
@@ -56,6 +83,15 @@ export const env = {
   ai: {
     liveTurnPriority: optional('AI_LIVE_TURN_MODEL_PRIORITY', 'cerebras,groq,openai').split(','),
     derivativePriority: optional('AI_DERIVATIVE_MODEL_PRIORITY', 'groq,openai,cerebras').split(','),
+    // Indexed 0-4, corresponding to _1 through _5 — an entry is `undefined`
+    // if that numbered key isn't configured. See numberedProviderKeys()'s
+    // comment above for why these stay optional/variable-count rather than
+    // using required().
+    providerKeys: {
+      cerebras: numberedProviderKeys('CEREBRAS_API_KEY'),
+      groq: numberedProviderKeys('GROQ_API_KEY'),
+      openai: numberedProviderKeys('OPENAI_API_KEY'),
+    },
   },
 
   flutterwave: {

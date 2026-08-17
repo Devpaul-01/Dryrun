@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { createLogger } from '../../config/logger';
+import { env } from '../../config/env';
 
 const log = createLogger('extraction-service');
 const MAX_EXTRACTED_CHARS = 20000; // same cap as pasted-text sources, bounds prompt-stuffing risk
@@ -107,7 +108,11 @@ export async function extractTextFromImage(buffer: Buffer, mimeType: string = 'i
     return '';
   }
 
-  const apiKey = process.env.OPENAI_API_KEY_1;
+  // FIX (audit finding M6): reads through env.ts's centralized accessor
+  // instead of process.env directly — OPENAI_API_KEY_1 is index 0 of the
+  // openai provider's key array (env.ai.providerKeys.openai), the exact
+  // same accessor fallbackChain.ts now uses.
+  const apiKey = env.ai.providerKeys.openai[0];
   if (!apiKey) {
     log.warn('extractTextFromImage: no OpenAI API key configured (OPENAI_API_KEY_1) — OCR unavailable');
     return '';

@@ -10,37 +10,49 @@ const log = createLogger('ai-fallback-chain');
 
 const COOLDOWN_SECONDS = 60 * 60; // 1 hour, matches the pattern proven in the prior codebase
 
+/**
+ * FIX (audit finding M6): provider keys now come from env.ts's
+ * numberedProviderKeys() accessor (env.ai.providerKeys) instead of
+ * reading process.env directly, closing the gap where these specific keys
+ * bypassed env.ts's centralized, "nothing reaches into process.env
+ * directly" convention. Loops 0-4 to index into the resulting array
+ * (env.ts stores keys 1-5 at indices 0-4), but names each provider `-1`
+ * through `-5` via `i + 1` to preserve the exact existing naming
+ * convention unchanged — these names are used as Redis cooldown keys
+ * (cooldownKey()) and log-correlation identifiers, so renaming them would
+ * be an unrelated behavior change, not part of this fix.
+ */
 function buildProviderRegistry(): Record<string, AiProvider[]> {
   const registry: Record<string, AiProvider[]> = { cerebras: [], groq: [], openai: [] };
 
-  for (let i = 1; i <= 5; i++) {
-    const cerebrasKey = process.env[`CEREBRAS_API_KEY_${i}`];
+  for (let i = 0; i < 5; i++) {
+    const cerebrasKey = env.ai.providerKeys.cerebras[i];
     if (cerebrasKey) {
       registry.cerebras.push(
         createOpenAiLikeProvider({
-          name: `cerebras-${i}`,
+          name: `cerebras-${i + 1}`,
           baseUrl: 'https://api.cerebras.ai/v1',
           apiKey: cerebrasKey,
           model: 'gpt-oss-120b',
         })
       );
     }
-    const groqKey = process.env[`GROQ_API_KEY_${i}`];
+    const groqKey = env.ai.providerKeys.groq[i];
     if (groqKey) {
       registry.groq.push(
         createOpenAiLikeProvider({
-          name: `groq-${i}`,
+          name: `groq-${i + 1}`,
           baseUrl: 'https://api.groq.com/openai/v1',
           apiKey: groqKey,
           model: 'llama-3.3-70b-versatile',
         })
       );
     }
-    const openaiKey = process.env[`OPENAI_API_KEY_${i}`];
+    const openaiKey = env.ai.providerKeys.openai[i];
     if (openaiKey) {
       registry.openai.push(
         createOpenAiLikeProvider({
-          name: `openai-${i}`,
+          name: `openai-${i + 1}`,
           baseUrl: 'https://api.openai.com/v1',
           apiKey: openaiKey,
           model: 'gpt-4o-mini',

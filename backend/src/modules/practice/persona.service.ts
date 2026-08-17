@@ -39,6 +39,10 @@ export async function createManualPersona(
       communication_style: input.communication_style ?? 'professional and direct',
       source_type: 'generated',
       reusable: true,
+      // Explicit rather than relying on the column default (audit finding
+      // L2) — this persona is created synchronously with real, complete
+      // data, so it's genuinely ready immediately.
+      generation_status: 'ready',
     })
     .select('*')
     .single();
@@ -75,6 +79,11 @@ export async function createPersonaFromSource(input: {
       source_type:
         input.sourceKind === 'pasted_text' ? 'combined' : input.sourceKind === 'url' ? 'company_url' : 'document',
       reusable: true,
+      // FIX (audit finding L2): REST polling fallback for generation
+      // progress, alongside the persona:{personaId} realtime channel.
+      // Previously the only signal was string-matching the 'Generating…'
+      // placeholder name, an undocumented and fragile API contract.
+      generation_status: 'generating',
     })
     .select('id')
     .single();
@@ -140,11 +149,24 @@ export async function getPersonaById(id: string, workspaceId: string) {
  * PATCH /personas/:id on an already-deleted persona would succeed and
  * return the updated row — resurrecting/mutating data that should be
  * inert. Now matches getPersonaById's existing, correct filter.
+ *
+ * FIX (audit finding L2): also sets generation_status: 'ready' on every
+ * successful update. A user manually completing a still-'generating' or
+ * 'failed' placeholder's fields via this endpoint IS the resolution of
+ * generation from the product's perspective — same reasoning as the
+ * optimistic-concurrency fix on synthesizePersona.worker.ts's own final
+ * write (the user's own edit wins). Harmless no-op for the common case of
+ * editing an already-'ready' persona. Set AFTER spreading `updates` (not
+ * merged alongside it) so this value always wins even if `updates` were
+ * ever populated from a differently-validated call site in the future —
+ * updatePersonaSchema has no generation_status field today, so this can't
+ * currently be overridden by caller input, but this ordering keeps that
+ * guarantee independent of the schema.
  */
 export async function updatePersona(id: string, workspaceId: string, updates: Record<string, unknown>) {
   const { data, error } = await supabaseAdmin()
     .from('personas')
-    .update(updates)
+    .update({ ...updates, generation_status: 'ready' })
     .eq('id', id)
     .eq('workspace_id', workspaceId)
     .is('deleted_at', null)

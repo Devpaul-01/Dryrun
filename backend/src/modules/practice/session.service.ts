@@ -110,6 +110,13 @@ export async function createSession(input: CreateSessionInput) {
         hidden_motivations: generated.hidden_motivations,
         source_type: 'generated',
         reusable: true,
+        // Explicit rather than relying on the column default (audit
+        // finding L2) — generatePersona() above has already completed
+        // synchronously and returned real data by the time this insert
+        // runs, so this persona is genuinely ready immediately, same
+        // reasoning as createManualPersona and demo.service.ts's
+        // convertDemo.
+        generation_status: 'ready',
       })
       .select('*')
       .single();
