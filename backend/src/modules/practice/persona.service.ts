@@ -135,22 +135,45 @@ export async function getPersonaById(id: string, workspaceId: string) {
   return data;
 }
 
+/**
+ * FIX (audit finding H2): this used to have no soft-delete filter, meaning
+ * PATCH /personas/:id on an already-deleted persona would succeed and
+ * return the updated row — resurrecting/mutating data that should be
+ * inert. Now matches getPersonaById's existing, correct filter.
+ */
 export async function updatePersona(id: string, workspaceId: string, updates: Record<string, unknown>) {
   const { data, error } = await supabaseAdmin()
     .from('personas')
     .update(updates)
     .eq('id', id)
     .eq('workspace_id', workspaceId)
+    .is('deleted_at', null)
     .select('*')
     .single();
   if (error || !data) throw ApiError.notFound('Persona not found.');
   return data;
 }
 
+/**
+ * FIX (audit finding H2): the update's result was never checked, so
+ * DELETE /personas/:id on a nonexistent or already-deleted ID silently
+ * returned 200 { success: true } with no indication nothing happened —
+ * inconsistent with this same codebase's own established convention
+ * (workspace.service.ts's removeMember/updateMemberRole check exactly
+ * this same class of unchecked write). Now verifies the update actually
+ * matched an active (not-yet-deleted) row before treating it as success.
+ */
 export async function deletePersona(id: string, workspaceId: string) {
-  await supabaseAdmin()
+  const { data, error } = await supabaseAdmin()
     .from('personas')
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', id)
-    .eq('workspace_id', workspaceId);
+    .eq('workspace_id', workspaceId)
+    .is('deleted_at', null)
+    .select('id')
+    .maybeSingle();
+
+  if (error || !data) {
+    throw ApiError.notFound('Persona not found.');
+  }
 }

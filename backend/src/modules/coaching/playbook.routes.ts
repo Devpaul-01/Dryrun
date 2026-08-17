@@ -8,6 +8,7 @@ import { expensiveActionRateLimit } from '../../middleware/rateLimit';
 import { withIdempotency } from '../../lib/idempotency';
 import * as playbookService from './playbook.service';
 import { supabaseAdmin } from '../../config/supabase';
+import { fetchCursorPage } from '../../lib/cursorPagination';
 
 /**
  * Split out of the original coaching.routes.ts (item #14, router
@@ -25,15 +26,34 @@ const generatePlaybookSchema = z.object({
   title: z.string().max(200).optional(),
 });
 
+const listPlaybooksQuerySchema = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().min(1).max(100).optional(),
+});
+
+/**
+ * FIX (audit finding H3): this endpoint was previously fully unbounded —
+ * no .limit() at all — despite lib/cursorPagination.ts's own header
+ * comment already documenting "personas, invoices" (and, by the same
+ * reasoning, playbooks) as endpoints meant to be cursor-paginated. A
+ * workspace that generates playbooks over time had no cap and no way to
+ * page through its list. Now uses the same fetchCursorPage helper GET
+ * /sessions and GET /notifications already use — response shape changes
+ * from `{ playbooks: [...] }` to `{ items: [...], next_cursor }`, a
+ * deliberate breaking change made now (before any frontend consumes this
+ * endpoint) rather than after, per the roadmap's explicit sequencing note.
+ */
 router.get(
   '/playbooks',
+  validate({ query: listPlaybooksQuerySchema }),
   asyncHandler(async (req, res) => {
-    const { data } = await supabaseAdmin()
-      .from('playbooks')
-      .select('id, title, created_at, share_token')
-      .eq('workspace_id', req.workspace!.id)
-      .order('created_at', { ascending: false });
-    res.json({ playbooks: data ?? [] });
+    const page = await fetchCursorPage(
+      supabaseAdmin(),
+      'playbooks',
+      (q) => q.select('id, title, created_at, share_token').eq('workspace_id', req.workspace!.id) as any,
+      req.query as any
+    );
+    res.json(page);
   })
 );
 

@@ -32,7 +32,15 @@ export async function listMembers(workspaceId: string) {
     .from('workspace_members')
     .select('id, user_id, role, status, joined_at, users(email, display_name)')
     .eq('workspace_id', workspaceId)
-    .neq('status', 'removed');
+    .neq('status', 'removed')
+    // FIX (audit finding H3): this query had no bound at all. Workspace
+    // membership is naturally small in practice (seat-based billing
+    // already caps it economically), so a full cursor-pagination
+    // contract isn't warranted here — a generous safety cap is the
+    // right-sized fix, matching listPersonas()'s existing "offset-
+    // acceptable at current expected scale" reasoning for the same class
+    // of endpoint.
+    .limit(500);
   if (error) throw ApiError.internal('Failed to list members.');
   return data;
 }

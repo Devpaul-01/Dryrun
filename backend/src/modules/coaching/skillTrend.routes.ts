@@ -32,11 +32,26 @@ router.get(
 router.get(
   '/skill-trend/goals',
   asyncHandler(async (req, res) => {
+    // FIX (audit finding H3): this query previously had no bound at all.
+    // A naive .limit() here would be WRONG, not just incomplete — this
+    // endpoint computes an ACHIEVEMENT RATE (achieved/total) aggregated
+    // client-side across every goal a user has ever set, so truncating
+    // the input set would silently change the meaning of the returned
+    // rate (a "lifetime rate" quietly becoming a "rate over your most
+    // recent N goals," with no signal to the caller that it happened).
+    // The cap below is sized generously enough (2000 goals — years of
+    // daily practice at this product's own cadence) to be a true safety
+    // net against a pathological outlier, not a truncation any real
+    // account would ever actually hit; a genuine unbounded-scale fix
+    // would mean computing this via a database-side GROUP BY instead of
+    // a client-side reduction, which is a larger query-shape change than
+    // this pass's scope.
     const { data } = await supabaseAdmin()
       .from('session_goals')
       .select('goal_type, goal_achieved, practice_sessions!inner(user_id, workspace_id)')
       .eq('practice_sessions.user_id', req.user!.id)
-      .eq('practice_sessions.workspace_id', req.workspace!.id);
+      .eq('practice_sessions.workspace_id', req.workspace!.id)
+      .limit(2000);
 
     const byType = new Map<string, { total: number; achieved: number }>();
     for (const row of data ?? []) {

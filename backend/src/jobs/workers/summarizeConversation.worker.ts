@@ -72,11 +72,30 @@ roleplay coherently — not as a user-facing recap. Return ONLY the summary text
   // accumulate multiple stale summary rows per session.
   await supabaseAdmin().from('session_context_summaries').delete().eq('session_id', sessionId);
 
-  await supabaseAdmin().from('session_context_summaries').insert({
+  // FIX (audit finding M3): this insert previously never checked its
+  // returned error. session_context_summaries.session_id is the table's
+  // PRIMARY KEY, so a genuine retry race (two summarization jobs for the
+  // same session interleaving their delete-then-insert) could hit a
+  // primary-key violation on the second insert — the old code logged
+  // "Conversation summary generated" regardless, even when the intended
+  // write hadn't actually happened. A PK/unique violation here specifically
+  // means a concurrent attempt already wrote a summary for this session,
+  // which is an expected outcome under retry, not a real failure; any
+  // OTHER error is logged clearly instead of being silently swallowed.
+  const { error: insertError } = await supabaseAdmin().from('session_context_summaries').insert({
     session_id: sessionId,
     summary_text: result.content.trim(),
     covers_up_to_sequence_index: upToSequenceIndex,
   });
+
+  if (insertError) {
+    if (insertError.code === '23505') {
+      log.info({ sessionId }, 'Conversation summary already written by a concurrent attempt — skipping');
+    } else {
+      log.error({ err: insertError, sessionId }, 'Failed to write conversation summary');
+    }
+    return;
+  }
 
   log.info({ sessionId, upToSequenceIndex, messageCount: messages.length }, 'Conversation summary generated');
 }

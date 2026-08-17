@@ -145,10 +145,28 @@ export async function cancelSubscription(workspaceId: string) {
   return { effective_at: sub.current_period_end };
 }
 
-export async function addSeats(workspaceId: string, additionalSeats: number) {
+/**
+ * FIX (audit finding M1): this used to update seats_purchased with no
+ * audit_log entry at all, despite every other consequential billing
+ * mutation in this file (checkout confirmation, and — once this fix
+ * lands — subscription renewal) writing one. actorUserId is threaded
+ * through from the route (req.user!.id, always the authenticated caller,
+ * gated by requireRole('owner','admin') at the route) so this entry can
+ * name who actually took the action, matching the fuller audit-entry
+ * convention used by workspace.service.ts's removeMember/updateMemberRole.
+ */
+export async function addSeats(workspaceId: string, additionalSeats: number, actorUserId: string) {
   const { data: workspace } = await supabaseAdmin().from('workspaces').select('seats_purchased').eq('id', workspaceId).single();
   const newSeatCount = (workspace?.seats_purchased ?? 1) + additionalSeats;
   await supabaseAdmin().from('workspaces').update({ seats_purchased: newSeatCount }).eq('id', workspaceId);
+  await supabaseAdmin().from('audit_log').insert({
+    actor_user_id: actorUserId,
+    workspace_id: workspaceId,
+    action: 'seats_added',
+    target_type: 'workspace',
+    target_id: workspaceId,
+    metadata: { additionalSeats, newSeatCount },
+  });
   return { seats_purchased: newSeatCount };
 }
 
@@ -172,11 +190,11 @@ export async function getUsage(workspaceId: string) {
   };
 }
 
-export async function listInvoices(workspaceId: string) {
-  const { data } = await supabaseAdmin()
-    .from('payment_transactions')
-    .select('id, amount, currency, status, created_at')
-    .eq('workspace_id', workspaceId)
-    .order('created_at', { ascending: false });
-  return data ?? [];
-}
+// FIX (audit finding H3): listInvoices() used to live here as a plain,
+// fully-unbounded query, inconsistent with this codebase's established
+// convention of doing cursor pagination at the ROUTE layer (see
+// session.routes.ts's GET /, notifications.routes.ts's GET /,
+// playbook.routes.ts's GET /playbooks — every other fetchCursorPage call
+// site is a route handler, not a service function). Moved to
+// billing.routes.ts's GET /invoices directly rather than kept here, so
+// this module doesn't become the one place that breaks that layering.
