@@ -52,8 +52,11 @@ export async function resolveWorkspace(req: Request, res: Response, next: NextFu
       throw ApiError.unauthorized();
     }
 
+    // FIX (BACKEND_API_RECOMMENDATIONS.md finding B1): req.user is now the
+    // raw snake_case users row (see middleware/authenticate.ts's
+    // AuthenticatedUser) — current_workspace_id, not currentWorkspaceId.
     const requestedWorkspaceId =
-      (req.headers['x-workspace-id'] as string | undefined) ?? req.user.currentWorkspaceId;
+      (req.headers['x-workspace-id'] as string | undefined) ?? req.user.current_workspace_id;
 
     if (!requestedWorkspaceId) {
       throw ApiError.badRequest('No workspace context available for this user.');

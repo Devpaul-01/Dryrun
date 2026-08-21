@@ -43,7 +43,10 @@ router.post(
 router.get(
   '/status',
   asyncHandler(async (req, res) => {
-    res.json({ onboarding_completed: !!req.user!.onboardingCompletedAt });
+    // FIX (BACKEND_API_RECOMMENDATIONS.md finding B1): req.user is now the
+    // raw snake_case users row — onboarding_completed_at, not
+    // onboardingCompletedAt.
+    res.json({ onboarding_completed: !!req.user!.onboarding_completed_at });
   })
 );
 

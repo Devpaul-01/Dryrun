@@ -746,3 +746,39 @@ alter table plans enable row level security;
 -- mirrors a plausible future client-side read), so it gets a real policy
 -- rather than a full lockout. Everything else stays service-role-only.
 create policy plans_public_read on plans for select to authenticated using (is_active = true);
+
+-- =============================================================================
+-- Realtime broadcast authorization (see
+-- migrations/0004_realtime_broadcast_authorization.sql for the full
+-- rationale, the false-positive OR-combination bug that was caught and
+-- fixed during authoring, and the ACTION REQUIRED section describing what
+-- must also be confirmed/enabled at the Supabase project level and on the
+-- client SDK side — this policy alone does not fully close the gap it
+-- backs, BACKEND_API_RECOMMENDATIONS.md finding B2).
+-- =============================================================================
+
+alter table realtime.messages enable row level security;
+
+create policy "broadcast_channel_subscribe_authorized_only"
+on realtime.messages
+for select
+to authenticated
+using (
+  case split_part(topic, ':', 1)
+    when 'session' then
+      exists (
+        select 1 from practice_sessions ps
+        where ps.id::text = split_part(topic, ':', 2)
+          and ps.user_id = auth.uid()
+      )
+    when 'persona' then
+      exists (
+        select 1 from personas p
+        join workspace_members wm on wm.workspace_id = p.workspace_id
+        where p.id::text = split_part(topic, ':', 2)
+          and wm.user_id = auth.uid()
+          and wm.status = 'active'
+      )
+    else false
+  end
+);

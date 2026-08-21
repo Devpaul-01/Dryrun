@@ -3,16 +3,18 @@ import { ApiError } from '../../lib/apiError';
 import { enqueue } from '../../jobs/queues';
 import { trackEvent } from '../analytics/analytics.service';
 
-export async function listPersonas(workspaceId: string) {
-  const { data } = await supabaseAdmin()
-    .from('personas')
-    .select('id, name, role, source_type, reusable, created_at')
-    .eq('workspace_id', workspaceId)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-    .limit(100); // offset-acceptable at current expected scale, per architecture §2.10 note
-  return data ?? [];
-}
+// FIX (BACKEND_API_RECOMMENDATIONS.md finding B3): listPersonas() used to
+// live here as a plain, capped-at-100 query with no pagination beyond
+// that cap — a workspace crossing 100 reusable personas would see the
+// list silently truncate with no next_cursor, no total count, no signal
+// anything was cut off. Moved to persona.routes.ts's GET /personas
+// directly, matching this codebase's established convention (cursor
+// pagination lives at the ROUTE layer — session.routes.ts, notifications.
+// routes.ts, playbook.routes.ts, billing.routes.ts's GET /invoices all
+// call fetchCursorPage from their route handler, not from a service
+// function). Same deliberate breaking-change treatment already applied to
+// GET /playbooks and GET /billing/invoices: response shape changes from
+// `{ personas: [...] }` to `{ items: [...], next_cursor }`.
 
 export async function createManualPersona(
   workspaceId: string,

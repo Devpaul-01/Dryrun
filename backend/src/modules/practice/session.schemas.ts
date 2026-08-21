@@ -3,7 +3,10 @@ import { SCENARIO_TYPES, PRESSURE_MODIFIERS, GOAL_TYPES, MAX_STACKED_PRESSURE_MO
 
 const scenarioTypeEnum = z.enum(SCENARIO_TYPES.map((s) => s.type) as [string, ...string[]]);
 const pressureModifierEnum = z.enum(PRESSURE_MODIFIERS.map((p) => p.type) as [string, ...string[]]);
-const goalTypeEnum = z.enum(GOAL_TYPES as unknown as [string, ...string[]]);
+// FIX (BACKEND_API_RECOMMENDATIONS.md finding R1): exported so
+// session.routes.ts's POST /:id/goal can validate against this exact
+// enum too, instead of maintaining a second, looser z.string() copy.
+export const goalTypeEnum = z.enum(GOAL_TYPES as unknown as [string, ...string[]]);
 
 export const createSessionSchema = z.object({
   scenario_type: scenarioTypeEnum,

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { asyncHandler } from '../../lib/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { entitlement } from '../../middleware/entitlement';
@@ -7,8 +8,15 @@ import { expensiveActionRateLimit } from '../../middleware/rateLimit';
 import * as personaService from './persona.service';
 import { createPersonaSchema, createPersonaFromSourceSchema, updatePersonaSchema } from './persona.schemas';
 import { SCENARIO_TYPES, PRESSURE_MODIFIERS, COMMUNICATION_STYLE_PRESETS, CONVERSATION_CHANNEL_PRESETS } from './scenario.config';
+import { supabaseAdmin } from '../../config/supabase';
+import { fetchCursorPage } from '../../lib/cursorPagination';
 
 const router = Router();
+
+const listPersonasQuerySchema = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().min(1).max(100).optional(),
+});
 
 router.get(
   '/scenarios',
@@ -22,11 +30,30 @@ router.get(
   })
 );
 
+/**
+ * FIX (BACKEND_API_RECOMMENDATIONS.md finding B3): this endpoint was
+ * previously capped at .limit(100) with no pagination beyond it — a
+ * workspace crossing 100 reusable personas would see the list silently
+ * truncate, with no next_cursor or signal anything was cut off. Now uses
+ * fetchCursorPage, matching GET /sessions, GET /playbooks, and
+ * GET /billing/invoices. Response shape changes from
+ * `{ personas: [...] }` to `{ items: [...], next_cursor }`.
+ */
 router.get(
   '/personas',
+  validate({ query: listPersonasQuerySchema }),
   asyncHandler(async (req, res) => {
-    const personas = await personaService.listPersonas(req.workspace!.id);
-    res.json({ personas });
+    const page = await fetchCursorPage(
+      supabaseAdmin(),
+      'personas',
+      (q) =>
+        q
+          .select('id, name, role, source_type, reusable, created_at')
+          .eq('workspace_id', req.workspace!.id)
+          .is('deleted_at', null) as any,
+      req.query as any
+    );
+    res.json(page);
   })
 );
 

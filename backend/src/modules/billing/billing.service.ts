@@ -154,6 +154,18 @@ export async function cancelSubscription(workspaceId: string) {
  * gated by requireRole('owner','admin') at the route) so this entry can
  * name who actually took the action, matching the fuller audit-entry
  * convention used by workspace.service.ts's removeMember/updateMemberRole.
+ *
+ * DELIBERATE PRODUCT DECISION (BACKEND_API_RECOMMENDATIONS.md finding
+ * R3, confirmed directly with the product owner — not an oversight):
+ * adding seats does NOT charge the workspace. This function only ever
+ * adjusts the seat COUNT that canInviteMember (entitlements.ts) checks
+ * invites against; it never touches Flutterwave, never writes a
+ * payment_transactions row, and never changes the workspace's recurring
+ * billed amount. If this product decision changes later, implementing an
+ * actual charge here is a real design decision (one-time top-up vs. an
+ * adjustment to the recurring amount attemptRenewalCharge.worker.ts
+ * charges on renewal) that needs to be made explicitly, not inferred from
+ * this function's current shape.
  */
 export async function addSeats(workspaceId: string, additionalSeats: number, actorUserId: string) {
   const { data: workspace } = await supabaseAdmin().from('workspaces').select('seats_purchased').eq('id', workspaceId).single();

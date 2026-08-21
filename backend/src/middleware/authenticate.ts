@@ -5,14 +5,36 @@ import { createLogger } from '../config/logger';
 
 const log = createLogger('auth-middleware');
 
+/**
+ * FIX (BACKEND_API_RECOMMENDATIONS.md finding B1): this shape used to be
+ * camelCase and only 7 fields, while PATCH /user/me returned the raw
+ * `users` row (snake_case, 9 fields, including is_admin/updated_at which
+ * this interface omitted entirely) — two different `User` shapes for what
+ * should be the single most central object in a frontend's client-side
+ * state. Now matches the raw `users` table row shape exactly (snake_case,
+ * every column PATCH /user/me already returns), so both endpoints — and
+ * any future one that returns "the current user" — share one type.
+ *
+ * is_admin is included here deliberately for SHAPE CONSISTENCY only, not
+ * as a new trust boundary: middleware/requireAdmin.ts intentionally does
+ * NOT read this field — it re-queries is_admin fresh from the database on
+ * every single admin request, specifically so a just-revoked admin is
+ * blocked immediately rather than after their token's next refresh. That
+ * behavior is unchanged by this fix; req.user.is_admin exists for the
+ * frontend to display/branch on, not for any backend authorization check
+ * to rely on.
+ */
 export interface AuthenticatedUser {
   id: string;
   email: string;
-  displayName: string | null;
-  currentWorkspaceId: string | null;
-  emailVerifiedAt: string | null;
-  onboardingCompletedAt: string | null;
-  deletedAt: string | null;
+  display_name: string | null;
+  current_workspace_id: string | null;
+  email_verified_at: string | null;
+  onboarding_completed_at: string | null;
+  is_admin: boolean;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 declare global {
@@ -69,9 +91,14 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       throw ApiError.unauthorized('Session expired. Please log in again.');
     }
 
+    // FIX (BACKEND_API_RECOMMENDATIONS.md finding B1): select('*') instead
+    // of an explicit column list — this is the same "authenticated user"
+    // row PATCH /user/me already returns via its own select('*'), so
+    // widening this query is what makes the two shapes match exactly
+    // going forward, including any future column added to `users`.
     const { data: profile, error: profileError } = await supabaseAdmin()
       .from('users')
-      .select('id, email, display_name, current_workspace_id, email_verified_at, onboarding_completed_at, deleted_at')
+      .select('*')
       .eq('id', authUser.id)
       .single();
 
@@ -84,18 +111,10 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       throw new ApiError(403, 'ACCOUNT_DELETED', 'This account has been deleted.');
     }
 
-    req.user = {
-      id: profile.id,
-      email: profile.email,
-      displayName: profile.display_name,
-      currentWorkspaceId: profile.current_workspace_id,
-      emailVerifiedAt: profile.email_verified_at,
-      onboardingCompletedAt: profile.onboarding_completed_at,
-      deletedAt: profile.deleted_at,
-    };
+    req.user = profile as AuthenticatedUser;
 
     const isExemptPath = VERIFICATION_EXEMPT_PATHS.has(req.path);
-    if (!req.user.emailVerifiedAt && !isExemptPath) {
+    if (!req.user.email_verified_at && !isExemptPath) {
       throw new ApiError(
         403,
         'EMAIL_NOT_VERIFIED',

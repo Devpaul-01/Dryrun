@@ -12,7 +12,7 @@ import { withIdempotency } from '../../lib/idempotency';
 import * as sessionService from './session.service';
 import * as debriefService from '../coaching/debrief.service';
 import * as scoringService from '../coaching/scoring.service';
-import { createSessionSchema, sendMessageSchema, renameSessionSchema, listSessionsQuerySchema, messagesQuerySchema, attachmentsSchema } from './session.schemas';
+import { createSessionSchema, sendMessageSchema, renameSessionSchema, listSessionsQuerySchema, messagesQuerySchema, attachmentsSchema, goalTypeEnum } from './session.schemas';
 import { cached, cacheKeys, cacheTags, CACHE_TTL } from '../../config/cache';
 import { fetchMessagesPage } from '../../lib/messagesPagination';
 
@@ -240,7 +240,14 @@ router.get(
       return;
     }
 
-    res.setHeader('Content-Disposition', `attachment; filename="session-${req.params.id}.json"`);
+    // FIX (BACKEND_API_RECOMMENDATIONS.md finding R4): Content-Disposition
+    // was previously set unconditionally, including here on the default
+    // JSON branch — meaningless for a typed fetch()/API client (the
+    // header signals a browser-navigation download, which a programmatic
+    // JSON consumer neither triggers nor benefits from), and Expo/React
+    // Native has no browser download mechanism to piggyback on regardless.
+    // Left on the text branch above, where a genuine file download is the
+    // actual intent.
     res.json(payload);
   })
 );
@@ -295,7 +302,13 @@ router.get(
 router.post(
   '/:id/goal',
   validate({
-    body: z.object({ goal_type: z.string(), custom_text: z.string().max(300).optional() }),
+    // FIX (BACKEND_API_RECOMMENDATIONS.md finding R1): goal_type was
+    // z.string() here — no enum check — while POST /sessions validates
+    // the identical field via goalTypeEnum. A client could silently write
+    // a goal_type the rest of the system (prompt builders' per-goal-type
+    // criteria, scenario.config.ts's GOAL_TYPES) doesn't recognize, with
+    // no 400. Now reuses the exact same enum.
+    body: z.object({ goal_type: goalTypeEnum, custom_text: z.string().max(300).optional() }),
   }),
   asyncHandler(async (req, res) => {
     // SECURITY FIX: this route previously had NO authorization check on
