@@ -500,11 +500,26 @@ export async function retrySession(sessionId: string, workspaceId: string, userI
   const original = await getSessionById(sessionId, workspaceId, userId);
   if (original.status !== 'completed') throw ApiError.badRequest('Original session must be completed first.');
 
+  // FIX (HIGH-3): this used to omit personaId entirely, so createSession's
+  // no-persona-provided branch generated a brand-new persona — a "retry"
+  // was actually practiced against a different buyer (different name,
+  // pain points, communication style) than the original session. That
+  // undercuts computeSessionComparison's own framing ("your retry attempt
+  // against your original practice session on the same scenario") and,
+  // more importantly, the product intent: comparing performance against
+  // the SAME buyer. Passing the original session's persona_id reuses the
+  // live persona row (matches this codebase's normal createSession
+  // personaId-provided path); if that persona has since been edited, the
+  // retry reflects the current version, not a frozen snapshot of what it
+  // looked like during the original session — acceptable for this fix's
+  // scope, and consistent with how every other personaId-driven session
+  // creation in this codebase already works.
   const retry = await createSession({
     userId,
     workspaceId,
     scenarioType: original.scenario_type,
     pressureModifiers: original.pressure_modifiers ?? [],
+    personaId: original.persona_id ?? undefined,
   });
 
   await supabaseAdmin().from('practice_sessions').update({ retry_of_session_id: sessionId }).eq('id', retry.id);

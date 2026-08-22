@@ -50,10 +50,24 @@ router.post(
       .single();
 
     if (error) {
-      // Unique constraint violation on provider_event_id = duplicate delivery.
-      // Still respond 200 so the provider doesn't retry indefinitely.
-      log.info({ providerEventId }, 'Duplicate webhook delivery, ignoring');
-      res.status(200).json({ received: true });
+      // FIX (CRIT-4): this used to treat ANY insert error identically to a
+      // duplicate-delivery unique-violation, including transient DB
+      // failures — silently dropping a real, never-seen-before payment
+      // webhook while telling Flutterwave "received", so it would never
+      // retry. Postgres's unique_violation SQLSTATE is '23505' (matches
+      // the pattern already used elsewhere in this codebase for the
+      // identical class of problem — see badges.service.ts and
+      // summarizeConversation.worker.ts); only that specific case is a
+      // genuine duplicate. Anything else is a real failure that must
+      // surface as one, so the provider retries the delivery instead of
+      // the event being permanently lost.
+      if (error.code === '23505') {
+        log.info({ providerEventId }, 'Duplicate webhook delivery, ignoring');
+        res.status(200).json({ received: true });
+        return;
+      }
+      log.error({ error, providerEventId }, 'ALERT: failed to persist webhook event');
+      res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to record webhook event.' });
       return;
     }
 

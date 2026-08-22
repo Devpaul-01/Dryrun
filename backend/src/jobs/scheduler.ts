@@ -114,14 +114,30 @@ export async function dispatchWeeklySummaries(): Promise<void> {
  * a duplicate idempotencyKey as a BullMQ no-op); once a renewal succeeds,
  * current_period_end changes, so a future cycle's renewal gets a genuinely
  * new key rather than being permanently deduplicated away.
+ *
+ * FIX (CRIT-1): this used to select every `status = 'active'` subscription
+ * past its period end with no regard for `canceled_at`. Cancellation
+ * (billing.service.ts's cancelSubscription) is deliberately modeled as
+ * "effective at period end" — `status` stays `'active'` and only
+ * `canceled_at` is set, so access continues until the period genuinely
+ * ends. That's the correct design; the bug was that this query couldn't
+ * tell a subscription due for a normal renewal apart from one a customer
+ * had already explicitly canceled, so a canceled subscription got
+ * charged again exactly like a normal renewal. The query is now split
+ * into two disjoint sets: real renewals (charge as before) and canceled-
+ * and-now-expired subscriptions (finalize to `'canceled'` directly, no
+ * charge, no dunning).
  */
 export async function checkRenewalsDue(): Promise<void> {
   const { enqueue } = await import('./queues');
+  const nowIso = new Date().toISOString();
+
   const { data: dueSubscriptions, error } = await supabaseAdmin()
     .from('subscriptions')
     .select('id, current_period_end')
     .eq('status', 'active')
-    .lt('current_period_end', new Date().toISOString());
+    .is('canceled_at', null)
+    .lt('current_period_end', nowIso);
 
   if (error) {
     log.error({ error }, 'ALERT: failed to query subscriptions due for renewal');
@@ -139,5 +155,32 @@ export async function checkRenewalsDue(): Promise<void> {
 
   if (dueSubscriptions?.length) {
     log.info({ count: dueSubscriptions.length }, 'Dispatched renewal-charge attempts for subscriptions past their period end');
+  }
+
+  const { data: expiredCancellations, error: cancelError } = await supabaseAdmin()
+    .from('subscriptions')
+    .select('id, workspace_id, current_period_end')
+    .eq('status', 'active')
+    .not('canceled_at', 'is', null)
+    .lt('current_period_end', nowIso);
+
+  if (cancelError) {
+    log.error({ error: cancelError }, 'ALERT: failed to query canceled subscriptions past their period end');
+    throw cancelError;
+  }
+
+  for (const sub of expiredCancellations ?? []) {
+    await supabaseAdmin().from('subscriptions').update({ status: 'canceled' }).eq('id', sub.id);
+    await supabaseAdmin().from('audit_log').insert({
+      workspace_id: sub.workspace_id,
+      action: 'subscription_canceled_at_period_end',
+      target_type: 'subscription',
+      target_id: sub.id,
+      metadata: {},
+    });
+  }
+
+  if (expiredCancellations?.length) {
+    log.info({ count: expiredCancellations.length }, 'Finalized canceled subscriptions past their period end (no charge attempted)');
   }
 }

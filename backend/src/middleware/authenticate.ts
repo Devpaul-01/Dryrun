@@ -50,12 +50,15 @@ declare global {
  * Routes a not-yet-verified user is still allowed to hit, so they can
  * actually complete verification and aren't locked out of the app entirely
  * with no way forward.
+ *
+ * FIX (CRIT-6): '/api/v1/auth/verify-email' removed from this set — that
+ * route never runs `authenticate` at all (see auth.routes.ts), so its
+ * presence here was dead configuration that could never matter either way.
  */
 const VERIFICATION_EXEMPT_PATHS = new Set([
   '/api/v1/auth/me',
   '/api/v1/auth/logout',
   '/api/v1/auth/logout-all',
-  '/api/v1/auth/verify-email',
   '/api/v1/auth/resend-verification',
 ]);
 
@@ -113,7 +116,18 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
 
     req.user = profile as AuthenticatedUser;
 
-    const isExemptPath = VERIFICATION_EXEMPT_PATHS.has(req.path);
+    // FIX (CRIT-6): `req.path` alone is relative to wherever this
+    // middleware happens to be mounted (e.g. '/logout', not
+    // '/api/v1/auth/logout') — empirically confirmed with a standalone
+    // Express test, not just reasoned through. Compared against the
+    // full-path strings in VERIFICATION_EXEMPT_PATHS, that comparison
+    // never matched under this app's actual mount structure, meaning an
+    // unverified user was incorrectly blocked from logout, logout-all,
+    // resend-verification, and GET /me — exactly the routes meant to let
+    // them get unstuck. `req.baseUrl + req.path` reconstructs the full,
+    // mount-independent path; middleware/rateLimit.ts already uses this
+    // same pattern for its own keying, for the identical reason.
+    const isExemptPath = VERIFICATION_EXEMPT_PATHS.has(req.baseUrl + req.path);
     if (!req.user.email_verified_at && !isExemptPath) {
       throw new ApiError(
         403,
