@@ -157,6 +157,29 @@ async function recordUsage(
 }
 
 /**
+ * FIX (HIGH-11): previously called only from ai.service.ts's
+ * generateBuyerReply (the live_turn path) — persona synthesis, debriefs,
+ * scoring, playbooks, and session-comparison summaries were all logged to
+ * ai_usage_log (recordUsage below runs for every call type uniformly) but
+ * never checked against the per-workspace daily budget, so a workspace
+ * could exceed its intended daily AI spend entirely through those other
+ * paths. Moved here so every call type is uniformly protected, with a
+ * rough per-call-type cost estimate instead of one flat number for all of
+ * them — still an approximation (doesn't account for actual prompt
+ * length or model), but closer than treating every call type as
+ * equally expensive.
+ */
+const ESTIMATED_COST_USD: Record<string, number> = {
+  live_turn: 0.01,
+  persona_synthesis: 0.005,
+  debrief: 0.004,
+  scoring: 0.003,
+  playbook: 0.008,
+  consistency_check: 0.001,
+  session_comparison: 0.002,
+};
+
+/**
  * Attempts each provider/key in priority order for the given call type
  * ('live_turn' uses the fastest-tier priority list; every other call type
  * uses the derivative priority list, which can tolerate a slower/cheaper
@@ -167,6 +190,8 @@ export async function callWithFallback(
   workspaceId: string,
   options: ProviderCallOptions
 ): Promise<ProviderCallResult> {
+  await checkAndReserveBudget(workspaceId, ESTIMATED_COST_USD[callType] ?? 0.01);
+
   const priority = callType === 'live_turn' ? env.ai.liveTurnPriority : env.ai.derivativePriority;
   const queue = await buildQueue(priority);
 

@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '../../config/supabase';
-import { callWithFallback, checkAndReserveBudget } from './fallbackChain';
+import { callWithFallback } from './fallbackChain';
 import {
   buildLiveTurnPrompt,
   buildPersonaSynthesisPrompt,
@@ -57,8 +57,9 @@ interface GenerateBuyerReplyInput {
 export async function generateBuyerReply(
   input: GenerateBuyerReplyInput
 ): Promise<{ response: LiveTurnResponse; evaluationId: string }> {
-  await checkAndReserveBudget(input.workspaceId);
-
+  // FIX (HIGH-11): the budget check that used to live here is now inside
+  // fallbackChain.ts's callWithFallback, applied uniformly to every AI
+  // call type instead of only this one — see that file's comment.
   const { systemPrompt, messages } = buildLiveTurnPrompt({
     personaSnapshot: input.personaSnapshot,
     scenarioType: input.scenarioType,

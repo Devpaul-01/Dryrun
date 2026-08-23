@@ -9,6 +9,7 @@ import { fetchDeadLetterPage } from '../../jobs/deadLetterPagination';
 import { adminActionRateLimit } from '../../middleware/rateLimit';
 import { ApiError } from '../../lib/apiError';
 import * as billingService from '../billing/billing.service';
+import { fetchCursorPage } from '../../lib/cursorPagination';
 
 const router = Router();
 
@@ -52,15 +53,38 @@ router.post(
   })
 );
 
+/**
+ * FIX (MED-12): this used to be a flat query with a hard `.limit()` and
+ * no cursor — once a workspace/deployment accumulated more entries than
+ * that limit, there was no way to page back through older history at
+ * all. Converted to the same cursor-pagination pattern used everywhere
+ * else in this codebase. Response shape changes from `{ entries: [...] }`
+ * to `{ items: [...], next_cursor }`.
+ */
 router.get(
   '/audit-log',
-  validate({ query: z.object({ workspace_id: z.string().uuid().optional(), actor_user_id: z.string().uuid().optional(), limit: z.coerce.number().max(200).optional() }) }),
+  validate({
+    query: z.object({
+      cursor: z.string().optional(),
+      workspace_id: z.string().uuid().optional(),
+      actor_user_id: z.string().uuid().optional(),
+      limit: z.coerce.number().max(200).optional(),
+    }),
+  }),
   asyncHandler(async (req, res) => {
-    let query = supabaseAdmin().from('audit_log').select('*').order('created_at', { ascending: false }).limit((req.query as any).limit ?? 100);
-    if ((req.query as any).workspace_id) query = query.eq('workspace_id', (req.query as any).workspace_id);
-    if ((req.query as any).actor_user_id) query = query.eq('actor_user_id', (req.query as any).actor_user_id);
-    const { data } = await query;
-    res.json({ entries: data ?? [] });
+    const { cursor, workspace_id, actor_user_id, limit } = req.query as any;
+    const page = await fetchCursorPage(
+      supabaseAdmin(),
+      'audit_log',
+      (q) => {
+        let query = q.select('*');
+        if (workspace_id) query = query.eq('workspace_id', workspace_id);
+        if (actor_user_id) query = query.eq('actor_user_id', actor_user_id);
+        return query as any;
+      },
+      { cursor, limit }
+    );
+    res.json(page);
   })
 );
 

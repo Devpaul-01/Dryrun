@@ -76,11 +76,16 @@ export async function completeUpload(uploadId: string, workspaceId: string, user
     .single();
   if (error || !upload) throw ApiError.notFound('Upload not found.');
 
-  const { data: fileInfo, error: infoError } = await supabaseAdmin()
-    .storage.from(STORAGE_BUCKET)
-    .list(upload.storage_path.split('/').slice(0, -1).join('/'));
-  if (infoError) throw ApiError.internal('Failed to verify uploaded file.');
-
+  // FIX (MED-6): this used to call storage.list() here and only check
+  // whether the call itself errored — it never inspected the returned
+  // listing, so it could only ever catch a missing-directory error, which
+  // .list() on a valid (even empty) prefix doesn't produce. It looked
+  // like a verification step but wasn't one. Real verification that the
+  // file actually exists already happens one step downstream, in
+  // avScanUpload.worker.ts's storage.download() call, which DOES fail
+  // clearly and is already handled there (status/av_scan_status marked
+  // 'failed'/'flagged'). Removed rather than fixed in place, since a
+  // redundant check here would just duplicate that worker's job.
   await supabaseAdmin().from('uploads').update({ status: 'processing' }).eq('id', uploadId);
   await enqueue('persona-ingestion', 'av_scan_upload', { uploadId, workspaceId });
 

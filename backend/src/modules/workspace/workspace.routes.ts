@@ -128,6 +128,19 @@ router.delete(
   })
 );
 
+/**
+ * FIX (MED-9): self-service leave — no role gate, since any active
+ * member (not just owner/admin) may leave a workspace they don't own.
+ * The owner-blocked case is enforced inside leaveWorkspace() itself.
+ */
+router.post(
+  '/current/leave',
+  asyncHandler(async (req, res) => {
+    await workspaceService.leaveWorkspace(req.workspace!.id, req.user!.id);
+    res.json({ success: true });
+  })
+);
+
 router.patch(
   '/current/members/:id/role',
   requireRole('owner'),

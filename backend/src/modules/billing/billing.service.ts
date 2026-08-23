@@ -58,7 +58,7 @@ export async function initiateCheckout(workspaceId: string, planKey: string, use
     provider: provider.name,
     provider_customer_id: customer.providerCustomerId,
     status: 'incomplete',
-    pending_tx_ref: checkout.providerTxRef,
+    pending_tx_ref: checkout.provider_tx_ref,
   });
 
   return checkout;

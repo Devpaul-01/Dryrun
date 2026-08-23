@@ -51,8 +51,12 @@ router.post(
   })
 );
 
+// FIX (MED-7): this route had no rate limit at all, unlike /login,
+// /signup, and /forgot-password — a real gap for an endpoint that hits
+// Supabase's auth API on every call.
 router.post(
   '/refresh',
+  anonymousActionRateLimit,
   asyncHandler(async (req, res) => {
     const { refresh_token } = req.body;
     if (!refresh_token) throw ApiError.badRequest('refresh_token is required.');

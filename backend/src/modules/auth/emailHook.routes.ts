@@ -38,9 +38,9 @@ router.post(
     try {
       const payload = verifyAndParseEmailHookPayload(rawBody, headers);
       await handleEmailHookPayload(payload);
-      log.info({ actionType: payload.email_data.email_action_type }, 'Send Email Hook processed successfully');
+      log.info({ actionType: payload.email_data.email_action_type, requestId: req.requestId }, 'Send Email Hook processed successfully');
     } catch (err) {
-      log.error({ err }, 'Send Email Hook processing failed — Supabase will not retry this delivery');
+      log.error({ err, requestId: req.requestId }, 'Send Email Hook processing failed — Supabase will not retry this delivery');
       throw err;
     }
 

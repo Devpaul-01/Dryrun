@@ -2,9 +2,16 @@ export interface ProviderCustomerRef {
   providerCustomerId: string;
 }
 
+/**
+ * FIX (HIGH-5): fields renamed from checkoutUrl/providerTxRef to
+ * snake_case — this is the shape POST /billing/checkout returns directly
+ * to the client (billing.routes.ts does `res.status(201).json(checkout)`
+ * with no remapping), and it was the one place in the entire API that
+ * broke from the otherwise-universal snake_case convention.
+ */
 export interface CheckoutRef {
-  checkoutUrl: string;
-  providerTxRef: string;
+  checkout_url: string;
+  provider_tx_ref: string;
 }
 
 export interface VerificationResult {

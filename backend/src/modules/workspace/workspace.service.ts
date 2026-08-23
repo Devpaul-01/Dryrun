@@ -198,6 +198,17 @@ export async function acceptInvite(token: string, userId: string) {
  * table that exists to be a trustworthy account of what happened.
  */
 export async function removeMember(workspaceId: string, memberUserId: string, actorUserId: string) {
+  // FIX (MED-9): this used to succeed silently on the workspace's own
+  // owner, leaving workspaces.owner_user_id pointing at someone with no
+  // active workspace_members row at all — which would then fail their
+  // own next resolveWorkspace check. Ownership must be transferred first
+  // (transferOwnership already validates the new owner is an active
+  // member before making the switch).
+  const { data: workspace } = await supabaseAdmin().from('workspaces').select('owner_user_id').eq('id', workspaceId).single();
+  if (workspace?.owner_user_id === memberUserId) {
+    throw ApiError.conflict('Transfer ownership before removing the workspace owner.');
+  }
+
   const { data, error } = await supabaseAdmin()
     .from('workspace_members')
     .update({ status: 'removed' })
@@ -220,6 +231,36 @@ export async function removeMember(workspaceId: string, memberUserId: string, ac
     target_id: memberUserId,
     metadata: {},
   });
+}
+
+/**
+ * FIX (MED-9): self-service "leave workspace" for a plain member —
+ * DELETE /current/members/:id is owner/admin-gated (removing SOMEONE
+ * ELSE); this is the corresponding self-scoped action a plain member had
+ * no other way to trigger. The workspace owner cannot leave via this
+ * path either, for the same reason removeMember() blocks it above —
+ * ownership must be transferred first.
+ */
+export async function leaveWorkspace(workspaceId: string, userId: string) {
+  const { data: workspace } = await supabaseAdmin().from('workspaces').select('owner_user_id').eq('id', workspaceId).single();
+  if (workspace?.owner_user_id === userId) {
+    throw ApiError.conflict('Transfer ownership before leaving a workspace you own.');
+  }
+
+  const { data, error } = await supabaseAdmin()
+    .from('workspace_members')
+    .update({ status: 'removed' })
+    .eq('workspace_id', workspaceId)
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .select('id')
+    .maybeSingle();
+
+  if (error || !data) {
+    throw ApiError.notFound('You are not an active member of this workspace.');
+  }
+
+  await invalidateWorkspaceContextCache(userId, workspaceId);
 }
 
 /** Same fix as removeMember above: verify the update actually matched an active member before recording the audit entry. */

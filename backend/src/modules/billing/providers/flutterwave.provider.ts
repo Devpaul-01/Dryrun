@@ -47,7 +47,7 @@ export const flutterwaveProvider: PaymentProvider = {
       },
       { headers: { Authorization: `Bearer ${env.flutterwave.secretKey}` } }
     );
-    return { checkoutUrl: response.data.data.link, providerTxRef: txRef };
+    return { checkout_url: response.data.data.link, provider_tx_ref: txRef };
   },
 
   async verifyTransaction(providerTxRef: string): Promise<VerificationResult> {

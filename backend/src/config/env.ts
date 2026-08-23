@@ -136,3 +136,33 @@ export const env = {
     aiDailyBudgetUsdPerWorkspace: optionalInt('DEFAULT_AI_DAILY_BUDGET_USD_PER_WORKSPACE', 5),
   },
 };
+
+/**
+ * FIX (LOW-1): Flutterwave keys deliberately stay `optional()` above
+ * rather than `required()` — unlike Supabase/Redis, a missing key here
+ * doesn't crash every request, it just means checkout/webhook
+ * verification will fail later, silently, the first time someone
+ * actually tries to pay. That's a worse failure mode for a production
+ * deployment than failing loudly up front, so this warns (doesn't throw
+ * — a demo/staging instance with payment_enforcement_enabled left off
+ * may legitimately run with no billing configured at all) whenever
+ * NODE_ENV=production and any key is missing.
+ *
+ * Uses plain console.warn rather than config/logger.ts's createLogger:
+ * logger.ts itself imports `env` from this module, so importing logger.ts
+ * here would be a circular import. This is a narrow, deliberate exception
+ * to this codebase's usual logging convention, for exactly that reason.
+ */
+if (env.isProduction) {
+  const missingFlutterwaveKeys = [
+    !env.flutterwave.secretKey && 'FLUTTERWAVE_SECRET_KEY',
+    !env.flutterwave.publicKey && 'FLUTTERWAVE_PUBLIC_KEY',
+    !env.flutterwave.webhookSecretHash && 'FLUTTERWAVE_WEBHOOK_SECRET_HASH',
+  ].filter(Boolean);
+  if (missingFlutterwaveKeys.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[env] WARNING: running in production with missing Flutterwave configuration: ${missingFlutterwaveKeys.join(', ')}. Checkout and webhook verification will fail until these are set.`
+    );
+  }
+}
