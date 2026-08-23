@@ -151,6 +151,50 @@ export async function cancelSubscription(workspaceId: string) {
 }
 
 /**
+ * FIX (CRIT-2 / MED-2): the only previously-existing way to "change
+ * plans" was calling POST /billing/checkout again, which always creates
+ * a brand-new subscription row — if a workspace already had an active
+ * subscription, this could leave two simultaneously-'active' rows for
+ * the same workspace (the old one never canceled or superseded), each
+ * independently eligible to be picked up and charged by
+ * checkRenewalsDue(). This updates plan_id on the EXISTING active row
+ * in place instead: no proration, no new subscription row, no risk of
+ * the double-active-row state db/migrations/0006's unique index now
+ * also guards against at the database level. current_period_end is left
+ * untouched — the new plan's entitlements take effect immediately (see
+ * entitlements.ts's resolveEffectivePlan, which reads plan_id fresh),
+ * while the new price only applies starting at the next renewal charge.
+ */
+export async function changePlan(workspaceId: string, planKey: string, actorUserId: string) {
+  const sub = await getCurrentSubscription(workspaceId);
+  if (!sub || sub.status !== 'active') {
+    throw ApiError.badRequest('This workspace has no active subscription to change. Use checkout to start one.');
+  }
+
+  const { data: plan } = await supabaseAdmin().from('plans').select('*').eq('key', planKey).eq('is_active', true).single();
+  if (!plan) throw ApiError.notFound('Plan not found.');
+
+  if (plan.id === sub.plan_id) {
+    throw ApiError.badRequest('This workspace is already on this plan.');
+  }
+
+  const { error } = await supabaseAdmin().from('subscriptions').update({ plan_id: plan.id }).eq('id', sub.id);
+  if (error) throw ApiError.internal('Failed to change plan.');
+
+  await supabaseAdmin().from('audit_log').insert({
+    actor_user_id: actorUserId,
+    workspace_id: workspaceId,
+    action: 'plan_changed',
+    target_type: 'subscription',
+    target_id: sub.id,
+    metadata: { fromPlanId: sub.plan_id, toPlanId: plan.id, toPlanKey: planKey },
+  });
+  await trackEvent('subscription_plan_changed', { workspaceId }, { toPlan: planKey });
+
+  return { success: true };
+}
+
+/**
  * FIX (audit finding M1): this used to update seats_purchased with no
  * audit_log entry at all, despite every other consequential billing
  * mutation in this file (checkout confirmation, and — once this fix

@@ -59,6 +59,23 @@ router.post(
   })
 );
 
+/**
+ * MED-2 / CRIT-2: switches the workspace's existing active subscription
+ * to a different plan in place, rather than the previous only-option of
+ * calling POST /checkout again (which created a second, independent
+ * subscription row — see billing.service.ts's changePlan for the full
+ * rationale and db/migrations/0006 for the database-level backstop).
+ */
+router.post(
+  '/change-plan',
+  requireRole('owner', 'admin'),
+  validate({ body: z.object({ plan_key: z.string() }) }),
+  asyncHandler(async (req, res) => {
+    const result = await billingService.changePlan(req.workspace!.id, req.body.plan_key, req.user!.id);
+    res.json(result);
+  })
+);
+
 router.post(
   '/add-seats',
   requireRole('owner', 'admin'),

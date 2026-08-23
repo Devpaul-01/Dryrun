@@ -1,0 +1,36 @@
+-- =============================================================================
+-- 0006: guarantee at most one active subscription per workspace
+-- =============================================================================
+-- Finding CRIT-2 (SUBSCRIPTION_BILLING_REFINEMENT.md): there was no
+-- plan-change/upgrade/downgrade endpoint, so the only existing way to
+-- "switch plans" was calling checkout again — which creates a brand-new
+-- subscription row rather than modifying the existing active one. If a
+-- workspace already had an active subscription, this could leave TWO
+-- simultaneously-'active' rows, and the older one — no longer the
+-- "current" plan by created_at, but still active with its own
+-- current_period_end — would eventually be picked up by
+-- checkRenewalsDue() and charged again independently, i.e. a real
+-- double-billing risk.
+--
+-- billing.service.ts#changePlan() (added alongside this migration) closes
+-- the application-level cause by updating plan_id on the existing active
+-- row in place instead of creating a second one. This index is the
+-- database-level backstop: it guarantees the invariant holds regardless
+-- of any future code path (a bug, a rushed feature, direct DB access)
+-- that might otherwise violate it.
+--
+-- CAUTION BEFORE APPLYING TO A DATABASE WITH EXISTING DATA: if any
+-- workspace already has more than one 'active' subscription row (which
+-- the pre-fix code could produce), this CREATE UNIQUE INDEX will fail.
+-- Query for duplicates first:
+--
+--   select workspace_id, count(*) from subscriptions
+--   where status = 'active' group by workspace_id having count(*) > 1;
+--
+-- and manually resolve any workspace found (cancel the older row, e.g.
+-- `update subscriptions set status = 'canceled', canceled_at = now()
+-- where id = '<older-row-id>'`) before running this migration.
+-- =============================================================================
+
+create unique index uq_subscriptions_one_active_per_workspace
+  on subscriptions (workspace_id) where status = 'active';
