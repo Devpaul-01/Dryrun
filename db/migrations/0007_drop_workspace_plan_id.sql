@@ -1,0 +1,23 @@
+-- =============================================================================
+-- 0007: drop the dead workspaces.plan_id column
+-- =============================================================================
+-- Finding HIGH-1 (BACKEND_READINESS_OVERVIEW.md / FRONTEND_READINESS.md):
+-- workspaces.plan_id was never written by any application code path —
+-- not at workspace creation (auth.service.ts's ensureProfileAndWorkspace
+-- only sets `name`), not at checkout confirmation (billing.service.ts's
+-- confirmCheckout only ever updates the SUBSCRIPTION row's plan_id, never
+-- the workspace's). It was always null, yet middleware/resolveWorkspace.ts
+-- selected and returned it as ResolvedWorkspace.planId, and
+-- GET /workspaces/current returned it via workspaces' raw select('*') —
+-- a real, live foot-gun for a frontend engineer who would reasonably (and
+-- incorrectly) treat it as the workspace's current plan. The actual
+-- source of truth is, and remains, the `subscriptions` table via
+-- entitlements.ts's resolveEffectivePlan() / GET /billing/subscription.
+--
+-- Run only after confirming the application code no longer selects this
+-- column (this migration ships alongside that code change in the same
+-- patch — see middleware/resolveWorkspace.ts and
+-- modules/workspace/workspace.service.ts).
+-- =============================================================================
+
+alter table workspaces drop column plan_id;

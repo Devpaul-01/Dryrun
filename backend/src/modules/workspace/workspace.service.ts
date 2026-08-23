@@ -317,7 +317,7 @@ export async function transferOwnership(workspaceId: string, newOwnerUserId: str
 export async function switchCurrentWorkspace(userId: string, targetWorkspaceId: string) {
   const { data: membership } = await supabaseAdmin()
     .from('workspace_members')
-    .select('role, status, workspaces(id, name, plan_id)')
+    .select('role, status, workspaces(id, name)')
     .eq('user_id', userId)
     .eq('workspace_id', targetWorkspaceId)
     .maybeSingle();
@@ -339,11 +339,15 @@ export async function switchCurrentWorkspace(userId: string, targetWorkspaceId: 
   // "correctness matters more than the small extra DB read" philosophy.
   await invalidateWorkspaceContextCache(userId, targetWorkspaceId);
 
-  const ws = membership.workspaces as unknown as { id: string; name: string; plan_id: string };
+  // FIX (HIGH-1): planId removed from this response — workspaces.plan_id
+  // was never written anywhere and was always null (see
+  // middleware/resolveWorkspace.ts's matching fix and
+  // db/migrations/0007, which drops the column). The workspace's real
+  // current plan is GET /billing/subscription, never this field.
+  const ws = membership.workspaces as unknown as { id: string; name: string };
   return {
     id: ws.id,
     name: ws.name,
-    planId: ws.plan_id,
     role: membership.role as 'owner' | 'admin' | 'member',
   };
 }

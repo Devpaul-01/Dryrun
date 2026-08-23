@@ -5,10 +5,20 @@ import { ApiError } from '../lib/apiError';
 
 export type WorkspaceRole = 'owner' | 'admin' | 'member';
 
+/**
+ * FIX (HIGH-1): `planId` removed — workspaces.plan_id was never written
+ * by any application code path (workspace creation only sets `name`;
+ * checkout confirmation only ever updates the SUBSCRIPTION row's
+ * plan_id, never the workspace's), so this field was always null and a
+ * genuine foot-gun for any caller that reasonably assumed it reflected
+ * the workspace's current plan. The real source of truth is, and
+ * remains, entitlements.ts's resolveEffectivePlan() /
+ * GET /billing/subscription — see db/migrations/0007, which drops the
+ * dead column entirely.
+ */
 export interface ResolvedWorkspace {
   id: string;
   name: string;
-  planId: string;
   role: WorkspaceRole;
 }
 
@@ -73,7 +83,7 @@ export async function resolveWorkspace(req: Request, res: Response, next: NextFu
 
     const { data: membership, error } = await supabaseAdmin()
       .from('workspace_members')
-      .select('role, status, workspaces(id, name, plan_id)')
+      .select('role, status, workspaces(id, name)')
       .eq('user_id', req.user.id)
       .eq('workspace_id', requestedWorkspaceId)
       .maybeSingle();
@@ -82,11 +92,10 @@ export async function resolveWorkspace(req: Request, res: Response, next: NextFu
       throw ApiError.forbidden('You do not have access to this workspace.');
     }
 
-    const ws = membership.workspaces as unknown as { id: string; name: string; plan_id: string };
+    const ws = membership.workspaces as unknown as { id: string; name: string };
     const resolved: ResolvedWorkspace = {
       id: ws.id,
       name: ws.name,
-      planId: ws.plan_id,
       role: membership.role as WorkspaceRole,
     };
 
