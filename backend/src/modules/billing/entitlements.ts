@@ -151,34 +151,6 @@ export async function canGeneratePlaybook(workspace: ResolvedWorkspace): Promise
   });
 }
 
-export async function canInviteMember(workspace: ResolvedWorkspace): Promise<EntitlementResult> {
-  return withEnforcementCheck('seat_limit', workspace, async () => {
-    const { data: ws } = await supabaseAdmin()
-      .from('workspaces')
-      .select('seats_purchased')
-      .eq('id', workspace.id)
-      .single();
-
-    const { count } = await supabaseAdmin()
-      .from('workspace_members')
-      .select('id', { count: 'exact', head: true })
-      .eq('workspace_id', workspace.id)
-      .eq('status', 'active');
-
-    const { count: pendingInvites } = await supabaseAdmin()
-      .from('workspace_invites')
-      .select('id', { count: 'exact', head: true })
-      .eq('workspace_id', workspace.id)
-      .eq('status', 'pending');
-
-    const seatsUsed = (count ?? 0) + (pendingInvites ?? 0);
-    const seatsPurchased = ws?.seats_purchased ?? 1;
-
-    if (seatsUsed < seatsPurchased) return { allowed: true };
-    return { allowed: false, reason: 'SEAT_LIMIT_REACHED', details: { seatsPurchased } };
-  });
-}
-
 /**
  * Reserved for Phase 2 (voice mode). Implemented now so shipping voice later
  * is a plan-data/config change, not new plumbing.

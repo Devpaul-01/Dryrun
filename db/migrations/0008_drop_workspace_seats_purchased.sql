@@ -1,0 +1,22 @@
+-- =============================================================================
+-- 0008: drop workspaces.seats_purchased (seat removal, product decision)
+-- =============================================================================
+-- Finding HIGH-2 (SUBSCRIPTION_BILLING_REFINEMENT.md §5): per explicit
+-- product direction, DryRun charges for the workspace subscription
+-- itself, not for a purchased seat count. Seats were already fully
+-- decoupled from payment before this change (see billing.service.ts's
+-- old addSeats() comment: "adding seats does NOT charge the workspace")
+-- — this migration removes the last remaining piece, the column itself,
+-- after the application code that read/wrote it has already been
+-- removed in this same patch:
+--   - billing.service.ts#addSeats() — removed
+--   - POST /billing/add-seats — removed
+--   - entitlements.ts#canInviteMember() — removed
+--   - POST /workspaces/current/invites — no longer entitlement-gated
+--
+-- Run only after confirming (grep) that no application code still
+-- selects or writes `seats_purchased` — this migration ships in the same
+-- patch as those removals, sequenced last on purpose.
+-- =============================================================================
+
+alter table workspaces drop column seats_purchased;

@@ -76,16 +76,6 @@ router.post(
   })
 );
 
-router.post(
-  '/add-seats',
-  requireRole('owner', 'admin'),
-  validate({ body: z.object({ additional_seats: z.number().int().positive() }) }),
-  asyncHandler(async (req, res) => {
-    const result = await billingService.addSeats(req.workspace!.id, req.body.additional_seats, req.user!.id);
-    res.json(result);
-  })
-);
-
 /**
  * FIX (audit finding H3): this endpoint was previously fully unbounded —
  * no .limit() at all — meaning a long-lived paying workspace's invoice

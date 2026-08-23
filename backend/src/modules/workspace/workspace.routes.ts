@@ -2,12 +2,12 @@ import { Router } from 'express';
 import { asyncHandler } from '../../lib/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { requireRole } from '../../middleware/requireRole';
-import { entitlement } from '../../middleware/entitlement';
-import { canInviteMember } from '../billing/entitlements';
 import * as workspaceService from './workspace.service';
-import { updateWorkspaceSchema, createInviteSchema, updateMemberRoleSchema, transferOwnershipSchema, switchWorkspaceSchema } from './workspace.schemas';
+import { updateWorkspaceSchema, createInviteSchema, updateMemberRoleSchema, transferOwnershipSchema, switchWorkspaceSchema, listMembersQuerySchema } from './workspace.schemas';
 import { z } from 'zod';
 import { ApiError } from '../../lib/apiError';
+import { supabaseAdmin } from '../../config/supabase';
+import { fetchCursorPage } from '../../lib/cursorPagination';
 
 const router = Router();
 
@@ -47,11 +47,30 @@ router.patch(
   })
 );
 
+/**
+ * FIX (HIGH-2, seat removal): this used to be a flat list hard-capped at
+ * 500, justified by "seat-based billing already caps membership
+ * economically" — that justification no longer holds once seats are
+ * removed, so this now uses the same cursor-pagination pattern already
+ * established for sessions/playbooks/personas/notifications/invoices.
+ * Response shape changes from `{ members: [...] }` to
+ * `{ items: [...], next_cursor }`.
+ */
 router.get(
   '/current/members',
+  validate({ query: listMembersQuerySchema }),
   asyncHandler(async (req, res) => {
-    const members = await workspaceService.listMembers(req.workspace!.id);
-    res.json({ members });
+    const page = await fetchCursorPage(
+      supabaseAdmin(),
+      'workspace_members',
+      (q) =>
+        q
+          .select('id, user_id, role, status, joined_at, created_at, users(email, display_name)')
+          .eq('workspace_id', req.workspace!.id)
+          .neq('status', 'removed') as any,
+      req.query as any
+    );
+    res.json(page);
   })
 );
 
@@ -67,7 +86,6 @@ router.get(
 router.post(
   '/current/invites',
   requireRole('owner', 'admin'),
-  entitlement(canInviteMember),
   validate({ body: createInviteSchema }),
   asyncHandler(async (req, res) => {
     const invite = await workspaceService.createInvite(req.workspace!.id, req.user!.id, req.body.email, req.body.role);

@@ -194,43 +194,6 @@ export async function changePlan(workspaceId: string, planKey: string, actorUser
   return { success: true };
 }
 
-/**
- * FIX (audit finding M1): this used to update seats_purchased with no
- * audit_log entry at all, despite every other consequential billing
- * mutation in this file (checkout confirmation, and — once this fix
- * lands — subscription renewal) writing one. actorUserId is threaded
- * through from the route (req.user!.id, always the authenticated caller,
- * gated by requireRole('owner','admin') at the route) so this entry can
- * name who actually took the action, matching the fuller audit-entry
- * convention used by workspace.service.ts's removeMember/updateMemberRole.
- *
- * DELIBERATE PRODUCT DECISION (BACKEND_API_RECOMMENDATIONS.md finding
- * R3, confirmed directly with the product owner — not an oversight):
- * adding seats does NOT charge the workspace. This function only ever
- * adjusts the seat COUNT that canInviteMember (entitlements.ts) checks
- * invites against; it never touches Flutterwave, never writes a
- * payment_transactions row, and never changes the workspace's recurring
- * billed amount. If this product decision changes later, implementing an
- * actual charge here is a real design decision (one-time top-up vs. an
- * adjustment to the recurring amount attemptRenewalCharge.worker.ts
- * charges on renewal) that needs to be made explicitly, not inferred from
- * this function's current shape.
- */
-export async function addSeats(workspaceId: string, additionalSeats: number, actorUserId: string) {
-  const { data: workspace } = await supabaseAdmin().from('workspaces').select('seats_purchased').eq('id', workspaceId).single();
-  const newSeatCount = (workspace?.seats_purchased ?? 1) + additionalSeats;
-  await supabaseAdmin().from('workspaces').update({ seats_purchased: newSeatCount }).eq('id', workspaceId);
-  await supabaseAdmin().from('audit_log').insert({
-    actor_user_id: actorUserId,
-    workspace_id: workspaceId,
-    action: 'seats_added',
-    target_type: 'workspace',
-    target_id: workspaceId,
-    metadata: { additionalSeats, newSeatCount },
-  });
-  return { seats_purchased: newSeatCount };
-}
-
 export async function getUsage(workspaceId: string) {
   const periodStart = new Date();
   periodStart.setDate(1);
