@@ -95,36 +95,41 @@ export async function confirmCheckout(workspaceId: string, providerTxRef: string
 
   if (!sub) throw ApiError.notFound('No pending checkout found for this workspace.');
 
-  await supabaseAdmin()
-    .from('subscriptions')
-    .update({
-      status: 'active',
-      current_period_start: now.toISOString(),
-      current_period_end: periodEnd.toISOString(),
-      // Cleared on activation, mirroring processWebhookEvent.worker.ts's
-      // existing correct behavior — a pending_tx_ref that's already been
-      // consumed should never be matchable again.
-      pending_tx_ref: null,
-    })
-    .eq('id', sub.id);
-
-  await supabaseAdmin().from('payment_transactions').insert({
-    workspace_id: workspaceId,
-    subscription_id: sub.id,
-    provider_tx_ref: providerTxRef,
-    amount: result.amount,
-    currency: result.currency,
-    status: 'successful',
-    raw_payload: result,
+  // FIX (MED-5): subscription activation, the payment_transactions
+  // record, and the audit_log entry are now written atomically via a
+  // single Postgres function (db/migrations/0005) instead of three
+  // separate REST calls. A crash between them used to be able to leave
+  // the subscription activated while permanently losing the payment
+  // record, since a retry's lookup-by-pending_tx_ref would no longer
+  // match once the first call had already cleared it.
+  //
+  // FIX (CRIT-3): card_token/provider_tx_id are now written to their own
+  // dedicated columns (see migration 0005) rather than only inside
+  // raw_payload, which the webhook-reconciliation path
+  // (processWebhookEvent.worker.ts) stores in a different shape —
+  // attemptRenewalCharge.worker.ts needs card_token to be reliably
+  // present regardless of which of the two paths recorded this payment.
+  const { error: rpcError } = await supabaseAdmin().rpc('reconcile_successful_payment', {
+    p_subscription_id: sub.id,
+    p_workspace_id: workspaceId,
+    p_provider_tx_ref: providerTxRef,
+    p_amount: result.amount,
+    p_currency: result.currency,
+    p_card_token: result.cardToken ?? null,
+    p_provider_tx_id: result.providerTxId ?? null,
+    p_raw_payload: result,
+    p_new_status: 'active',
+    p_new_period_start: now.toISOString(),
+    p_new_period_end: periodEnd.toISOString(),
+    p_clear_pending_tx_ref: true,
+    p_audit_action: 'subscription_activated',
+    p_audit_actor_user_id: null,
+    p_audit_metadata: { providerTxRef },
   });
-
-  await supabaseAdmin().from('audit_log').insert({
-    workspace_id: workspaceId,
-    action: 'subscription_activated',
-    target_type: 'subscription',
-    target_id: sub.id,
-    metadata: { providerTxRef },
-  });
+  if (rpcError) {
+    log.error({ err: rpcError, workspaceId, subscriptionId: sub.id }, 'ALERT: payment verified by provider but failed to reconcile locally');
+    throw ApiError.internal('Payment was verified but activation failed. Please contact support.');
+  }
 
   await trackEvent('subscription_started', { workspaceId }, { planId: sub.plan_id });
   return { success: true };

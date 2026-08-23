@@ -73,12 +73,12 @@ export const flutterwaveProvider: PaymentProvider = {
     }
   },
 
-  async chargeRenewal(cardToken: string, amount: number, currency: string): Promise<VerificationResult> {
+  async chargeRenewal(cardToken: string, amount: number, currency: string, customerEmail: string): Promise<VerificationResult> {
     const txRef = `dryrun-renewal-${Date.now()}`;
     try {
       const response = await axios.post(
         `${BASE_URL}/tokenized-charges`,
-        { token: cardToken, currency, amount, email: 'billing@dryrun.app', tx_ref: txRef },
+        { token: cardToken, currency, amount, email: customerEmail, tx_ref: txRef },
         { headers: { Authorization: `Bearer ${env.flutterwave.secretKey}` } }
       );
       if (response.data?.status !== 'success') return { success: false };

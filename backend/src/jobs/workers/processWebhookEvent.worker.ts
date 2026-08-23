@@ -58,28 +58,38 @@ export async function processWebhookEventHandler(job: Job<{ webhookEventId: stri
     const periodEnd = new Date();
     periodEnd.setMonth(periodEnd.getMonth() + 1);
 
-    await supabaseAdmin()
-      .from('subscriptions')
-      .update({ status: 'active', current_period_end: periodEnd.toISOString(), pending_tx_ref: null })
-      .eq('id', subscription.id);
-
-    await supabaseAdmin().from('payment_transactions').insert({
-      workspace_id: subscription.workspace_id,
-      subscription_id: subscription.id,
-      provider_tx_ref: txRef,
-      amount: verification.amount,
-      currency: verification.currency,
-      status: 'successful',
-      raw_payload: payload,
+    // FIX (MED-5): atomic reconciliation via the same Postgres function
+    // confirmCheckout uses — see billing.service.ts's confirmCheckout and
+    // db/migrations/0005 for the full rationale. This is the OTHER path
+    // that can record a subscription's first successful payment, so it
+    // needs the identical fix.
+    //
+    // FIX (CRIT-3): raw_payload keeps storing the raw webhook body (still
+    // useful for debugging) but card_token/provider_tx_id are now also
+    // written to their own dedicated columns, pulled from `verification`
+    // (the re-verified result from the provider) rather than left absent
+    // the way this path used to leave them.
+    const { error: rpcError } = await supabaseAdmin().rpc('reconcile_successful_payment', {
+      p_subscription_id: subscription.id,
+      p_workspace_id: subscription.workspace_id,
+      p_provider_tx_ref: txRef,
+      p_amount: verification.amount,
+      p_currency: verification.currency,
+      p_card_token: verification.cardToken ?? null,
+      p_provider_tx_id: verification.providerTxId ?? null,
+      p_raw_payload: payload,
+      p_new_status: 'active',
+      p_new_period_start: new Date().toISOString(),
+      p_new_period_end: periodEnd.toISOString(),
+      p_clear_pending_tx_ref: true,
+      p_audit_action: 'webhook_payment_confirmed',
+      p_audit_actor_user_id: null,
+      p_audit_metadata: { txRef },
     });
-
-    await supabaseAdmin().from('audit_log').insert({
-      workspace_id: subscription.workspace_id,
-      action: 'webhook_payment_confirmed',
-      target_type: 'subscription',
-      target_id: subscription.id,
-      metadata: { txRef },
-    });
+    if (rpcError) {
+      log.error({ err: rpcError, eventId: event.id, subscriptionId: subscription.id }, 'ALERT: webhook-verified payment failed to reconcile locally');
+      throw rpcError; // surfaces as a dead-lettered, alerted failure and lets BullMQ retry — do NOT mark this event processed
+    }
   } else {
     await enqueue('notifications', 'send_payment_failed_email', { workspaceId: subscription.workspace_id });
   }

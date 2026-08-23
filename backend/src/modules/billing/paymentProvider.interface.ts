@@ -43,8 +43,13 @@ export interface PaymentProvider {
    * charge (bank transfer, some mobile money) — callers must handle that
    * case by falling back to a payment-reminder flow, not treat it as a
    * generic failure (architecture doc §14.2).
+   *
+   * FIX (MED-4): now takes the real customer email explicitly, matching
+   * initiateCharge's use of the real customer email — the Flutterwave
+   * implementation used to hardcode a placeholder address for every
+   * renewal charge regardless of who was actually being billed.
    */
-  chargeRenewal(cardToken: string, amount: number, currency: string): Promise<VerificationResult>;
+  chargeRenewal(cardToken: string, amount: number, currency: string, customerEmail: string): Promise<VerificationResult>;
   cancelSubscription(providerSubscriptionId: string): Promise<void>;
   refund(providerTxId: string): Promise<RefundResult>;
   /**
