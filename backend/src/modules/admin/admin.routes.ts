@@ -8,6 +8,7 @@ import { getQueue, retryJob, getAllQueueDepths, QueueName } from '../../jobs/que
 import { fetchDeadLetterPage } from '../../jobs/deadLetterPagination';
 import { adminActionRateLimit } from '../../middleware/rateLimit';
 import { ApiError } from '../../lib/apiError';
+import * as billingService from '../billing/billing.service';
 
 const router = Router();
 
@@ -92,6 +93,21 @@ router.get(
     const { data, error } = await supabaseAdmin().from('workspaces').select('*, subscriptions(*)').eq('id', req.params.id).single();
     if (error || !data) throw ApiError.notFound('Workspace not found.');
     res.json({ workspace: data });
+  })
+);
+
+/**
+ * FIX (HIGH-4): provider.refund() existed on the payment-provider
+ * interface and by the Flutterwave provider, but was never called from
+ * anywhere in the application — see billing.service.ts#refundSubscriptionPayment
+ * for the full rationale and scope.
+ */
+router.post(
+  '/subscriptions/:id/refund',
+  adminActionRateLimit,
+  asyncHandler(async (req, res) => {
+    const result = await billingService.refundSubscriptionPayment(req.params.id, req.user!.id);
+    res.json(result);
   })
 );
 

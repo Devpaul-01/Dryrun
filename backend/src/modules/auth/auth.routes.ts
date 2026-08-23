@@ -13,6 +13,7 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   verifyEmailSchema,
+  recoverAccountSchema,
 } from './auth.schemas';
 
 const router = Router();
@@ -120,6 +121,28 @@ router.post(
   asyncHandler(async (req, res) => {
     await authService.resendVerification(req.user!.id, req.user!.email);
     res.json({ success: true });
+  })
+);
+
+/**
+ * FIX (CRIT-7): makes DELETE /user/me's "you have 14 days to recover it
+ * by logging back in" promise actually true. Deliberately does NOT use
+ * `authenticate` — that middleware unconditionally 403s any request from
+ * a user with deleted_at set, which is exactly the account state this
+ * route exists to handle. See auth.service.ts#recoverAccount for the
+ * real authentication/grace-window logic.
+ */
+router.post(
+  '/recover-account',
+  anonymousActionRateLimit,
+  validate({ body: recoverAccountSchema }),
+  asyncHandler(async (req, res) => {
+    const result = await authService.recoverAccount(req.body.email, req.body.password);
+    res.json({
+      access_token: result.session.access_token,
+      refresh_token: result.session.refresh_token,
+      expires_at: result.session.expires_at,
+    });
   })
 );
 

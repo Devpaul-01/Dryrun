@@ -2,6 +2,8 @@ import { Job } from 'bullmq';
 import { supabaseAdmin } from '../../config/supabase';
 import { redisConnection } from '../../config/redis';
 import { createLogger } from '../../config/logger';
+import * as billingService from '../../modules/billing/billing.service';
+import { ApiError } from '../../lib/apiError';
 
 const log = createLogger('purge-soft-deleted-worker');
 const GRACE_PERIOD_DAYS = 14;
@@ -82,6 +84,35 @@ export async function purgeSoftDeletedAccountsHandler(_job: Job): Promise<void> 
       await supabaseAdmin().from('users').delete().eq('id', user.id);
       await supabaseAdmin().auth.admin.deleteUser(user.id);
       log.info({ userId: user.id }, 'Hard-purged soft-deleted account');
+
+      // FIX (HIGH-8): every workspace in soleOwnerWorkspaces is now
+      // ownerless AND memberless — workspaces.owner_user_id was just set
+      // to null by the FK's `on delete set null`, and the user's own
+      // workspace_members row cascaded away with them (the sole-owner
+      // block above already guaranteed none of these workspaces had any
+      // OTHER active member). Left alone, this is a permanently orphaned
+      // workspace row. cancelSubscription() here is defensive — the
+      // normal path is profile.routes.ts's DELETE /me already canceling
+      // any active subscription up front (CRIT-5) — but this covers an
+      // account being purged via any path that skipped that step, so a
+      // subscription can never keep being picked up by checkRenewalsDue()
+      // and charged against a workspace with no owner left to notify.
+      for (const ws of soleOwnerWorkspaces ?? []) {
+        try {
+          await billingService.cancelSubscription(ws.id);
+        } catch (err) {
+          if (!(err instanceof ApiError && err.status === 404)) {
+            log.warn({ err, workspaceId: ws.id }, 'Failed to defensively cancel subscription on orphaned workspace');
+          }
+        }
+
+        const { error: deleteWorkspaceError } = await supabaseAdmin().from('workspaces').delete().eq('id', ws.id);
+        if (deleteWorkspaceError) {
+          log.warn({ err: deleteWorkspaceError, workspaceId: ws.id }, 'Failed to clean up orphaned workspace after account purge');
+        } else {
+          log.info({ workspaceId: ws.id }, 'Deleted orphaned workspace (sole owner purged, zero remaining members)');
+        }
+      }
 
       // Heartbeat: refresh the lock's TTL now that this candidate is fully
       // processed, so a long-running batch never loses its lock mid-way

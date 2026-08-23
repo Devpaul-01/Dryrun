@@ -77,6 +77,19 @@ router.post(
 );
 
 /**
+ * MED-1: undo a pending cancellation before the period actually ends —
+ * see billing.service.ts#reactivateSubscription.
+ */
+router.post(
+  '/reactivate',
+  requireRole('owner', 'admin'),
+  asyncHandler(async (req, res) => {
+    const result = await billingService.reactivateSubscription(req.workspace!.id);
+    res.json(result);
+  })
+);
+
+/**
  * FIX (audit finding H3): this endpoint was previously fully unbounded —
  * no .limit() at all — meaning a long-lived paying workspace's invoice
  * history (monthly renewals over years) would grow without a cap or a

@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
 import { env } from '../../config/env';
 import { sendEmail, buildWorkspaceInviteEmailHtml } from '../notifications/email.service';
-import { invalidateWorkspaceContextCache } from '../../middleware/resolveWorkspace';
+import { invalidateWorkspaceContextCache, WorkspaceRole } from '../../middleware/resolveWorkspace';
 import { trackEvent } from '../analytics/analytics.service';
 
 function hashToken(token: string) {
@@ -14,6 +14,35 @@ export async function getCurrentWorkspace(workspaceId: string) {
   const { data, error } = await supabaseAdmin().from('workspaces').select('*').eq('id', workspaceId).single();
   if (error || !data) throw ApiError.notFound('Workspace not found.');
   return data;
+}
+
+/**
+ * FIX (CRIT-8): no endpoint previously existed to list the workspaces a
+ * user belongs to — POST /current/switch requires a workspace_id with no
+ * way for a client to discover what IDs are actually valid to switch to.
+ * Self-scoped by the authenticated user id, so no role gate is needed;
+ * naturally small (bounded by how many workspaces a person has actually
+ * joined), so no pagination contract either — same reasoning already
+ * applied to listMembers() before seat removal.
+ */
+export interface MyWorkspaceSummary {
+  id: string;
+  name: string;
+  role: WorkspaceRole;
+}
+
+export async function listMyWorkspaces(userId: string): Promise<MyWorkspaceSummary[]> {
+  const { data, error } = await supabaseAdmin()
+    .from('workspace_members')
+    .select('role, workspaces(id, name)')
+    .eq('user_id', userId)
+    .eq('status', 'active');
+  if (error) throw ApiError.internal('Failed to list workspaces.');
+
+  return (data ?? []).map((m) => {
+    const ws = m.workspaces as unknown as { id: string; name: string };
+    return { id: ws.id, name: ws.name, role: m.role as WorkspaceRole };
+  });
 }
 
 export async function updateWorkspace(workspaceId: string, updates: { name?: string }) {
@@ -36,10 +65,15 @@ export async function updateWorkspace(workspaceId: string, updates: { name?: str
  * because this function never queries that table at all.
  */
 export async function getAggregateTeamProgress(workspaceId: string) {
+  // FIX (HIGH-7): excludes soft-deleted users — see scheduler.ts's
+  // dispatchWeeklySummaries for the matching fix and full rationale. A
+  // user who requested account deletion shouldn't still be pulling the
+  // team average up or down during their 14-day grace period.
   const { data, error } = await supabaseAdmin()
     .from('user_skill_trend')
-    .select('user_id, composite_avg, period_start, period_end')
+    .select('user_id, composite_avg, period_start, period_end, users!inner(deleted_at)')
     .eq('workspace_id', workspaceId)
+    .is('users.deleted_at', null)
     .order('period_start', { ascending: false })
     .limit(50);
   if (error) throw ApiError.internal('Failed to load team progress.');

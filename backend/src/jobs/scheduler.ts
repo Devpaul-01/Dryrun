@@ -61,10 +61,23 @@ export async function registerSchedules(): Promise<void> {
  * `dispatch_weekly_summaries` fans out one send_weekly_summary job per
  * active user, rather than the scheduled entry itself doing per-user work —
  * keeps the scheduled job cheap and lets per-user sends retry independently.
+ *
+ * FIX (HIGH-7): excludes users with `deleted_at` set. workspace_members
+ * .status isn't touched by soft-delete (a deleted-but-not-yet-purged user
+ * is still 'active' there), so without this filter a user who requested
+ * account deletion kept receiving weekly summary emails for the entire
+ * 14-day grace period — a real trust problem, independent of whether
+ * they're ever actually recovered. See workspace.routes.ts's members
+ * query and workspace.service.ts#getAggregateTeamProgress for the
+ * matching fix on the read side.
  */
 export async function dispatchWeeklySummaries(): Promise<void> {
   const { enqueue } = await import('./queues');
-  const { data: members } = await supabaseAdmin().from('workspace_members').select('user_id, workspace_id').eq('status', 'active');
+  const { data: members } = await supabaseAdmin()
+    .from('workspace_members')
+    .select('user_id, workspace_id, users!inner(deleted_at)')
+    .eq('status', 'active')
+    .is('users.deleted_at', null);
   for (const m of members ?? []) {
     await enqueue('notifications', 'send_weekly_summary', { userId: m.user_id, workspaceId: m.workspace_id });
   }

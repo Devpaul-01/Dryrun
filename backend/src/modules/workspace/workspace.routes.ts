@@ -11,6 +11,20 @@ import { fetchCursorPage } from '../../lib/cursorPagination';
 
 const router = Router();
 
+/**
+ * FIX (CRIT-8): powers a workspace switcher — see
+ * workspace.service.ts#listMyWorkspaces for the full rationale. Mounted
+ * at the bare '/workspaces' root (app.ts mounts this router at
+ * /api/v1/workspaces), alongside the existing '/current/*' routes.
+ */
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const workspaces = await workspaceService.listMyWorkspaces(req.user!.id);
+    res.json({ workspaces });
+  })
+);
+
 router.get(
   '/current',
   asyncHandler(async (req, res) => {
@@ -60,14 +74,17 @@ router.get(
   '/current/members',
   validate({ query: listMembersQuerySchema }),
   asyncHandler(async (req, res) => {
+    // FIX (HIGH-7): excludes soft-deleted users — see scheduler.ts's
+    // dispatchWeeklySummaries for the matching fix and full rationale.
     const page = await fetchCursorPage(
       supabaseAdmin(),
       'workspace_members',
       (q) =>
         q
-          .select('id, user_id, role, status, joined_at, created_at, users(email, display_name)')
+          .select('id, user_id, role, status, joined_at, created_at, users!inner(email, display_name, deleted_at)')
           .eq('workspace_id', req.workspace!.id)
-          .neq('status', 'removed') as any,
+          .neq('status', 'removed')
+          .is('users.deleted_at', null) as any,
       req.query as any
     );
     res.json(page);

@@ -151,6 +151,25 @@ export async function cancelSubscription(workspaceId: string) {
 }
 
 /**
+ * FIX (MED-1): no way previously existed to undo a cancellation before
+ * the period actually ends — cancelSubscription() sets canceled_at but
+ * leaves status 'active' by design (see that function's own comment), so
+ * undoing it is simply clearing canceled_at back to null on the same
+ * row. 400s if there's no active, pending-cancellation subscription to
+ * reactivate, rather than silently no-op'ing.
+ */
+export async function reactivateSubscription(workspaceId: string) {
+  const sub = await getCurrentSubscription(workspaceId);
+  if (!sub || sub.status !== 'active' || !sub.canceled_at) {
+    throw ApiError.badRequest('There is no pending cancellation to undo.');
+  }
+
+  await supabaseAdmin().from('subscriptions').update({ canceled_at: null }).eq('id', sub.id);
+  await trackEvent('subscription_reactivated', { workspaceId }, {});
+  return { success: true };
+}
+
+/**
  * FIX (CRIT-2 / MED-2): the only previously-existing way to "change
  * plans" was calling POST /billing/checkout again, which always creates
  * a brand-new subscription row — if a workspace already had an active
@@ -190,6 +209,64 @@ export async function changePlan(workspaceId: string, planKey: string, actorUser
     metadata: { fromPlanId: sub.plan_id, toPlanId: plan.id, toPlanKey: planKey },
   });
   await trackEvent('subscription_plan_changed', { workspaceId }, { toPlan: planKey });
+
+  return { success: true };
+}
+
+/**
+ * FIX (HIGH-4): provider.refund() was implemented on the payment-provider
+ * interface and by the Flutterwave provider, but nothing in the
+ * application ever called it — no admin action, no way to record a
+ * refund happening. Scoped narrowly: refunds the subscription's most
+ * recent successful payment and cancels the subscription outright
+ * (status: 'canceled') rather than leaving it 'active' against a
+ * refunded charge. This does NOT yet handle Flutterwave-initiated
+ * disputes/chargebacks arriving via webhook — that needs Flutterwave's
+ * exact dispute/chargeback event-type name before it can be wired up
+ * automatically (open question, see BACKEND_READINESS_OVERVIEW.md) —
+ * this endpoint covers the admin/support-initiated case in the meantime.
+ */
+export async function refundSubscriptionPayment(subscriptionId: string, actorUserId: string) {
+  const { data: sub } = await supabaseAdmin()
+    .from('subscriptions')
+    .select('id, workspace_id')
+    .eq('id', subscriptionId)
+    .single();
+  if (!sub) throw ApiError.notFound('Subscription not found.');
+
+  const { data: lastTx } = await supabaseAdmin()
+    .from('payment_transactions')
+    .select('id, provider_tx_id, amount')
+    .eq('subscription_id', subscriptionId)
+    .eq('status', 'successful')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!lastTx) throw ApiError.badRequest('No successful payment found for this subscription to refund.');
+  if (!lastTx.provider_tx_id) {
+    // Only possible for a payment recorded before migration 0005 added
+    // provider_tx_id (its backfill only covers card_token, not this
+    // field — see that migration's comment for why).
+    throw ApiError.badRequest('This payment predates refund tracking and cannot be refunded automatically. Please refund it directly with the payment provider.');
+  }
+
+  const provider = getProvider();
+  const result = await provider.refund(lastTx.provider_tx_id);
+  if (!result.success) throw ApiError.internal('Refund failed at the payment provider.');
+
+  await supabaseAdmin().from('payment_transactions').update({ status: 'refunded' }).eq('id', lastTx.id);
+  await supabaseAdmin()
+    .from('subscriptions')
+    .update({ status: 'canceled', canceled_at: new Date().toISOString() })
+    .eq('id', sub.id);
+  await supabaseAdmin().from('audit_log').insert({
+    actor_user_id: actorUserId,
+    workspace_id: sub.workspace_id,
+    action: 'subscription_refunded',
+    target_type: 'subscription',
+    target_id: sub.id,
+    metadata: { paymentTransactionId: lastTx.id, providerTxId: lastTx.provider_tx_id, amount: lastTx.amount },
+  });
 
   return { success: true };
 }

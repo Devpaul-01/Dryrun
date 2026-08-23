@@ -4,6 +4,10 @@ import { asyncHandler } from '../../lib/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
+import * as billingService from '../billing/billing.service';
+import { createLogger } from '../../config/logger';
+
+const log = createLogger('profile-routes');
 
 /**
  * Split out of the original user.routes.ts (item #14, router
@@ -55,6 +59,28 @@ router.delete(
         .eq('status', 'active');
       if ((count ?? 0) > 1) {
         throw ApiError.conflict('Transfer ownership of your workspace(s) before deleting your account.');
+      }
+    }
+
+    // FIX (CRIT-5): cancel any active subscription on a workspace this
+    // user owns BEFORE soft-deleting the account. Without this, the
+    // subscription kept renewing — and getting charged — against a
+    // workspace that becomes ownerless once the 14-day grace period
+    // elapses and the account is hard-purged (see
+    // purgeSoftDeletedAccounts.worker.ts). Best-effort per workspace: a
+    // failure here is logged loudly (this is a real money problem, not
+    // just a data-quality one) but must not block the deletion request
+    // itself — the user has already passed the sole-ownership check
+    // above, and cancelSubscription() 404s harmlessly if there's nothing
+    // active to cancel.
+    for (const ws of ownedWorkspaces ?? []) {
+      try {
+        await billingService.cancelSubscription(ws.id);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          continue; // no active subscription on this workspace — nothing to cancel
+        }
+        log.error({ err, workspaceId: ws.id, userId: req.user!.id }, 'ALERT: failed to cancel subscription during account deletion');
       }
     }
 

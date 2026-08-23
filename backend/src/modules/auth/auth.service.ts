@@ -273,3 +273,65 @@ export async function logoutAllSessions(userId: string): Promise<void> {
     throw ApiError.internal('Failed to sign out of all sessions.');
   }
 }
+
+// FIX (CRIT-7): matches profile.routes.ts's GRACE_PERIOD_DAYS and
+// jobs/workers/purgeSoftDeletedAccounts.worker.ts's own GRACE_PERIOD_DAYS
+// constant — the recoverable window and the hard-purge window must agree,
+// since this function is what actually makes "you have 14 days to
+// recover it" true.
+const RECOVERY_GRACE_PERIOD_DAYS = 14;
+
+/**
+ * Self-service account recovery for a soft-deleted user within the grace
+ * period. Deliberately does NOT go through the normal Supabase session
+ * flow via the `authenticate` middleware — that middleware unconditionally
+ * rejects any request from a user with `deleted_at` set (see
+ * authenticate.ts), which is exactly the state a recoverable account is
+ * in. This function is the one legitimate place in the app that
+ * authenticates a soft-deleted user directly: it verifies real
+ * credentials via Supabase itself, then clears deleted_at only after
+ * confirming both the credentials and the grace window are valid.
+ */
+export async function recoverAccount(email: string, password: string) {
+  const { data, error } = await supabaseAdmin().auth.signInWithPassword({ email, password });
+  if (error || !data.session || !data.user) {
+    throw ApiError.unauthorized('Invalid email or password.');
+  }
+
+  const { data: profile, error: profileError } = await supabaseAdmin()
+    .from('users')
+    .select('id, deleted_at')
+    .eq('id', data.user.id)
+    .single();
+
+  if (profileError || !profile) {
+    throw ApiError.notFound('Account not found. Please contact support.');
+  }
+
+  if (!profile.deleted_at) {
+    // Not actually deleted — the caller already proved valid credentials,
+    // so just return a normal session rather than erroring on "nothing to
+    // recover."
+    return { session: data.session };
+  }
+
+  const deletedAtMs = new Date(profile.deleted_at).getTime();
+  const graceExpiresAtMs = deletedAtMs + RECOVERY_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;
+  if (Date.now() >= graceExpiresAtMs) {
+    throw ApiError.badRequest('This account is no longer recoverable. Please contact support or create a new account.');
+  }
+
+  const { error: updateError } = await supabaseAdmin().from('users').update({ deleted_at: null }).eq('id', profile.id);
+  if (updateError) throw ApiError.internal('Failed to recover account. Please try again.');
+
+  await supabaseAdmin().from('audit_log').insert({
+    actor_user_id: profile.id,
+    action: 'account_recovered',
+    target_type: 'user',
+    target_id: profile.id,
+    metadata: {},
+  });
+
+  log.info({ userId: profile.id }, 'Account recovered from soft-delete');
+  return { session: data.session };
+}
