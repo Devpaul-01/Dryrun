@@ -46,7 +46,8 @@
   "overrides": {
     "body-parser": "^1.20.9",
     "proxy-addr": "^2.0.8",
-    "follow-redirects": "^1.16.2"
+    "follow-redirects": "^1.16.2",
+    "@xmldom/xmldom": "^0.8.15"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.7",
