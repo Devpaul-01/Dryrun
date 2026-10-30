@@ -8,7 +8,7 @@ const router = Router();
 
 const trackSchema = z.object({
   event_name: z.string().min(1).max(100),
-  properties: z.record(z.unknown()).optional().default({}),
+  properties: z.record(z.string(), z.unknown()).optional().default({}),
   session_id: z.string().uuid().optional(),
 });
 
