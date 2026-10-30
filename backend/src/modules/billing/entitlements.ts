@@ -10,8 +10,6 @@ export interface EntitlementResult {
   details?: Record<string, unknown>;
 }
 
-const GRACE_STATUSES = new Set(['active', 'past_due']); // past_due only within grace window, checked below
-
 interface SubscriptionRow {
   status: string;
   current_period_end: string;

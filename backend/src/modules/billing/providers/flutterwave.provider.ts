@@ -26,7 +26,7 @@ const BASE_URL = 'https://api.flutterwave.com/v3';
 export const flutterwaveProvider: PaymentProvider = {
   name: 'flutterwave',
 
-  async createCustomer(email: string, name: string): Promise<ProviderCustomerRef> {
+  async createCustomer(email: string, _name: string): Promise<ProviderCustomerRef> {
     // Flutterwave does not require pre-creating a customer object the way
     // Stripe does — the customer is implicit in each charge's payload. We
     // use the email as the stable reference.

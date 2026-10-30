@@ -82,7 +82,7 @@ async function insertVersion(playbookId: string, content: Awaited<ReturnType<typ
   return data;
 }
 
-export async function regeneratePlaybook(playbookId: string, workspaceId: string, userId: string) {
+export async function regeneratePlaybook(playbookId: string, workspaceId: string) {
   const { data: playbook } = await supabaseAdmin()
     .from('playbooks')
     .select('id, current_version_id')

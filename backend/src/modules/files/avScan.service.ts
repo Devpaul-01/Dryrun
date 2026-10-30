@@ -1,3 +1,4 @@
+import { Readable } from 'stream';
 import NodeClam from 'clamscan';
 import { env } from '../../config/env';
 import { createLogger } from '../../config/logger';
@@ -36,8 +37,7 @@ export async function scanBuffer(buffer: Buffer): Promise<{ clean: boolean; reas
   }
 }
 
-function bufferToStream(buffer: Buffer) {
-  const { Readable } = require('stream');
+function bufferToStream(buffer: Buffer): Readable {
   const stream = new Readable();
   stream.push(buffer);
   stream.push(null);

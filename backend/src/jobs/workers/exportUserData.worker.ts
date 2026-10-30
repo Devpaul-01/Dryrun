@@ -2,7 +2,6 @@ import { Job } from 'bullmq';
 import { supabaseAdmin } from '../../config/supabase';
 import { STORAGE_BUCKET } from '../../modules/files/upload.service';
 import { notify } from '../../modules/notifications/notifications.service';
-import { env } from '../../config/env';
 import { createLogger } from '../../config/logger';
 
 const log = createLogger('export-user-data-worker');

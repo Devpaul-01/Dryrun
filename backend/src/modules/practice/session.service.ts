@@ -1,14 +1,10 @@
 import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
-import { createLogger } from '../../config/logger';
 import { trackEvent } from '../analytics/analytics.service';
 import { generateBuyerReply, generatePersona } from '../ai/ai.service';
-import { runScoringConsistencyCheck } from '../ai/scoringConsistency';
 import { enqueue } from '../../jobs/queues';
 import { MAX_STACKED_PRESSURE_MODIFIERS } from './scenario.config';
 import { invalidateTag, invalidate, cacheKeys, cacheTags } from '../../config/cache';
-
-const log = createLogger('session-service');
 
 const HISTORY_WINDOW_SIZE = 20; // bounded recent-window, not full unbounded transcript
 const NATURAL_ENDING_EXTRA_EXCHANGES = 3;

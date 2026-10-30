@@ -92,7 +92,7 @@ router.post(
   expensiveActionRateLimit,
   entitlement(canGeneratePlaybook),
   asyncHandler(async (req, res) => {
-    const playbook = await playbookService.regeneratePlaybook(req.params.id, req.workspace!.id, req.user!.id);
+    const playbook = await playbookService.regeneratePlaybook(req.params.id, req.workspace!.id);
     res.json({ playbook });
   })
 );
