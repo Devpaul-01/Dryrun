@@ -97,7 +97,7 @@ export async function confirmCheckout(workspaceId: string, providerTxRef: string
 
   // FIX (MED-5): subscription activation, the payment_transactions
   // record, and the audit_log entry are now written atomically via a
-  // single Postgres function (db/migrations/0005) instead of three
+  // single Postgres function (src/db/migrations/0012) instead of three
   // separate REST calls. A crash between them used to be able to leave
   // the subscription activated while permanently losing the payment
   // record, since a retry's lookup-by-pending_tx_ref would no longer
@@ -178,7 +178,7 @@ export async function reactivateSubscription(workspaceId: string) {
  * independently eligible to be picked up and charged by
  * checkRenewalsDue(). This updates plan_id on the EXISTING active row
  * in place instead: no proration, no new subscription row, no risk of
- * the double-active-row state db/migrations/0006's unique index now
+ * the double-active-row state src/db/migrations/0013's unique index now
  * also guards against at the database level. current_period_end is left
  * untouched — the new plan's entitlements take effect immediately (see
  * entitlements.ts's resolveEffectivePlan, which reads plan_id fresh),
