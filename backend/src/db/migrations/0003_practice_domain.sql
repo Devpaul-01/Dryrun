@@ -81,6 +81,17 @@ create type scenario_type as enum
   ('cold_open', 'skeptic', 'price_pushback', 'bad_timing', 'long_goodbye', 'radio_silence', 'drill');
 create type session_status as enum ('pending', 'active', 'completed', 'abandoned');
 
+-- FIX: practice_sessions.search_vector (below) needs scenario_type cast to
+-- text, but Postgres does not treat an enum-to-text cast as immutable, so
+-- it cannot appear directly inside a `generated always as (...) stored`
+-- expression ("generation expression is not immutable") — confirmed by
+-- actually running this migration against Postgres 16, not assumed. This
+-- thin SQL wrapper is explicitly marked immutable (safe: enum_out is a
+-- pure function of the enum's fixed label set) and gives the planner what
+-- it needs to accept the generated column below.
+create function scenario_type_to_text(scenario_type) returns text
+  language sql immutable as $$ select $1::text $$;
+
 create table practice_sessions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete cascade,
@@ -104,7 +115,7 @@ create table practice_sessions (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   search_vector tsvector generated always as (
-    to_tsvector('english', coalesce(title,'') || ' ' || coalesce(scenario_type::text,''))
+    to_tsvector('english', coalesce(title,'') || ' ' || coalesce(scenario_type_to_text(scenario_type),''))
   ) stored
 );
 create trigger practice_sessions_set_updated_at before update on practice_sessions
