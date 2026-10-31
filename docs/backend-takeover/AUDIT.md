@@ -124,12 +124,81 @@ absence-of-evidence:
   queues, the migrations README's stated dependency order) — these
   weren't just aspirational docs during this pass.
 
+## Pass 2 — Route-by-route authz/ownership review
+
+Date: 2026-10-31
+
+Reviewed every route module in the app (`auth`, `workspace`, `practice`,
+`coaching`, `billing`, `admin`, `files`, `notifications`, `analytics`,
+`demo`) against the global middleware chain
+(`requestId → securityHeaders → authenticate → resolveWorkspace →
+rateLimit → validate`) and, for every `:id`-bearing route, traced the
+call chain into its `service.ts` to confirm the underlying query actually
+filters by the right combination of `workspace_id`/`user_id` — not just
+that the route "looks" protected by virtue of being mounted after
+`resolveWorkspace`.
+
+**Result: no live authorization bugs found.** Specifically checked and
+confirmed correct:
+- `authenticate.ts` / `resolveWorkspace.ts` / `requireRole.ts` /
+  `requireAdmin.ts` — JWT verification, soft-delete handling, the
+  `x-workspace-id` header path (confirmed it can only select among
+  workspaces the caller actually belongs to, not an arbitrary workspace),
+  and `requireAdmin` re-querying `is_admin` fresh on every request rather
+  than trusting a cached claim.
+- `session.routes.ts` — every mutating/reading route funnels through
+  `getSessionById` or an equivalent inline check that verifies both
+  `workspace_id` and `user_id`; the file's own comments document two
+  real cross-tenant bugs (`/goal`, `GET /attachments`) that were already
+  found and fixed in this codebase's history, which is itself a good
+  sign of prior real review having happened here.
+- `billing.routes.ts` — role-gating is consistent and correctly scoped
+  (`cancel` requires `owner` specifically, not `admin`, which is the
+  right call for a destructive/financial action). One path looked
+  suspicious at first — `GET /usage` has no `requireRole` and internally
+  calls the same `getCurrentSubscription()` that the owner/admin-gated
+  `GET /subscription` uses — but traced it fully: `getUsage()` only
+  returns the joined `plans` object (public catalog data, same as the
+  unauthenticated `GET /plans`), never the subscription row itself
+  (which holds `provider_customer_id`/`provider_subscription_id`). Not
+  a leak.
+- `admin.routes.ts` / `workspace.routes.ts` — `requireAdmin` IP-allowlist
+  + fresh-`is_admin`-check double gate is correctly implemented;
+  workspace role-escalation (`updateMemberRole`, `transferOwnership`)
+  correctly requires `owner` specifically (an `admin` cannot promote
+  themselves); `removeMember` correctly blocks removing the workspace's
+  owner without a prior ownership transfer.
+- `persona.routes.ts`, `upload.routes.ts`, `notifications.routes.ts`,
+  `curriculum.routes.ts`, `badges.routes.ts`, `onboarding.routes.ts`,
+  `dashboard.routes.ts` — every resource lookup scopes by the correct
+  `workspace_id` and/or `user_id` in the same query as the mutation/read
+  itself, not via a separate, differently-scoped check.
+- `playbook.routes.ts`'s `publicPlaybookRouter` (mounted unauthenticated
+  at `/api/v1/public`) — looked up via a dedicated, separately-generated
+  `share_token` column, never the playbook's own primary `id`, and only
+  ever populated when a user explicitly makes a playbook shareable. Not
+  an enumeration path into private playbooks.
+- `demo.routes.ts` (mounted unauthenticated) — demo sessions use a
+  server-generated anonymous ID in an httpOnly cookie, never a
+  client-suppliable identifier, and are stored in a table entirely
+  separate from authenticated-user data. No bridge found into real
+  user data.
+
+One process note: an AI-assisted first pass at this same review produced
+three "findings" that did not survive independent verification against
+the actual source — one cited a route/service-function combination
+(`POST /skill-trend/goals`, a `setGoal()` function, a `target_score`
+field) that does not exist anywhere in the codebase; another described a
+`dismissCurriculum`-adjacent function with a different name and
+parameter order than the real one, and claimed a missing `user_id` scope
+that the real function actually has, in the same query. Re-verifying
+every claim against the primary source directly (not trusting the
+sub-review's report) is what caught this before anything was "fixed"
+based on a hallucinated gap — worth keeping as the standing practice for
+any future delegated security pass.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
-- Route-by-route authz/ownership review (middleware chain looks
-  consistent at a glance: `requestId → securityHeaders → authenticate →
-  resolveWorkspace → rateLimit → validate`, but not independently
-  verified per-route).
 - The AI output-validation pipeline and billing-reconciliation RPC the
   README highlights as the two highest-value places for tests — not
   independently re-verified here.
