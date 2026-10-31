@@ -38,7 +38,9 @@ feedback. This repo is the backend only; the client is a separate Expo
   documented step-by-step in each middleware file's own header comment.
 - `config/*` — typed, centralized environment config, plus the Redis/Supabase/
   cache/logger singletons every other module imports from.
-- `db/schema.sql` — the definitive Postgres schema (see "Database setup"
+- `src/db/migrations/` — the real, numbered migration history (0001-0015)
+  and the actual source of truth for the schema; `src/db/schema.sql` is a
+  generated reference snapshot of what they produce (see "Database setup"
   below).
 
 ### Three ways to run it
@@ -81,11 +83,22 @@ cp .env.example .env
 
 ### 3. Database
 
-Run `db/schema.sql` against your Supabase project's Postgres database (via
-the Supabase SQL editor, or `psql`). It's a single, complete schema file —
-tables, indexes, RLS policies, and triggers, dependency-ordered so it runs
-top-to-bottom on an empty database. There's no incremental migration
-history yet; this file **is** the schema.
+Run the migrations in `src/db/migrations/` against your Supabase project's
+Postgres database, in numeric order (0001 through 0015) — via `psql`, or
+the Supabase CLI's migration workflow. See `src/db/migrations/README.md`
+for exact commands and the dependency notes between files. This is the
+real, verified source of truth for the schema: every one of these files
+has actually been applied in order against a real Postgres 16 instance
+end-to-end, not just reviewed by eye.
+
+`src/db/schema.sql` is a generated reference snapshot of the schema these
+migrations produce (tables, indexes, RLS policies, triggers — the output
+of `pg_dump --schema-only` after applying every migration, see that file's
+own header for the regeneration procedure). It's useful for a quick read
+of the current schema shape, but is not meant to be run directly in place
+of the migrations — running the migrations is what's verified and
+documented with per-file dependency notes; the generated snapshot has
+neither.
 
 ### 4. Supabase Auth configuration
 

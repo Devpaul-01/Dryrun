@@ -49,7 +49,7 @@ export async function initiateCheckout(workspaceId: string, planKey: string, use
   // `dryrun-${planKey}-${Date.now()}`). This is what lets confirmCheckout
   // below match a verified transaction back to the EXACT pending
   // subscription row it belongs to — see that function's own comment and
-  // db/schema.sql's uq_subscriptions_pending_tx_ref partial unique index,
+  // src/db/schema.sql's uq_subscriptions_pending_tx_ref partial unique index,
   // which already existed for this purpose but was never populated by this
   // insert until now.
   await supabaseAdmin().from('subscriptions').insert({

@@ -84,7 +84,7 @@ export async function synthesizePersonaHandler(
     // the start of this handler, before generatePersona()'s AI call ran —
     // any PATCH that lands during that window will have advanced
     // updated_at (personas has an `updated_at` trigger, see
-    // db/schema.sql's set_updated_at()), so this conditional update will
+    // src/db/schema.sql's set_updated_at()), so this conditional update will
     // match zero rows and the user's own edit wins.
     const { data: updated, error: updateError } = await supabaseAdmin()
       .from('personas')
