@@ -197,11 +197,79 @@ sub-review's report) is what caught this before anything was "fixed"
 based on a hallucinated gap — worth keeping as the standing practice for
 any future delegated security pass.
 
+## Pass 3 — Billing reconciliation RPC: the happy path was broken
+
+Date: 2026-11-01
+
+`reconcile_successful_payment()` is the single Postgres function all three
+successful-payment paths call atomically — checkout confirmation
+(`billing.service.ts`'s `confirmCheckout`), Flutterwave webhook processing
+(`processWebhookEvent.worker.ts`), and renewal charges
+(`attemptRenewalCharge.worker.ts`). Rather than trust a read of the SQL
+alone, this was verified the same way the migration-consolidation bug in
+Pass 1 was found: standing up a real Postgres 16 instance, applying every
+migration end-to-end from empty, and actually calling the function with
+realistic data. That surfaced two independent, previously-undetected bugs
+— both now fixed and mechanically re-verified.
+
+**Finding 1 (most severe): `subscriptions.pending_tx_ref` was never
+created by any migration.** The column (and a partial unique index on it)
+is referenced throughout the application as though it already exists —
+`initiateCheckout` sets it, `confirmCheckout` and the webhook worker match
+on it, `attemptRenewalCharge.worker.ts` clears it via the RPC, and
+`billing.service.ts`'s own comments describe the index by name as already
+present. No migration ever actually created it. Calling the RPC against a
+real database failed immediately with `ERROR: column "pending_tx_ref"
+does not exist`. This meant every successful-payment reconciliation path
+— the entire billing "happy path" — was broken at the database level.
+Fixed in a new `src/db/migrations/0012_subscriptions_pending_tx_ref.sql`,
+inserted in true dependency order (ahead of the migration that defines
+the RPC depending on it), with four subsequent migration files renumbered
+to keep the sequence contiguous.
+
+**Finding 2: `reconcile_successful_payment()`'s own `audit_log` insert
+had a type mismatch.** With finding 1 fixed, the function got further but
+then failed with `ERROR: column "target_id" is of type uuid but
+expression is of type text` — the function casts its `p_subscription_id`
+parameter to `text` before inserting into `audit_log.target_id`, but that
+column is `uuid` (confirmed directly from its `create table audit_log`
+definition in `0005_billing_domain.sql`). Checked every other `audit_log`
+insert in the codebase (`auth.service.ts`, `workspace.service.ts`,
+`billing.service.ts`'s other two call sites, `scheduler.ts`,
+`attemptRenewalCharge.worker.ts`) — all pass `target_id` as a raw `uuid`,
+never cast to text. This RPC was the one outlier, and because finding 1
+blocked the function from ever reaching this line in practice, this bug
+was fully masked until the column was added. Fixed by removing the
+erroneous `::text` cast in
+`src/db/migrations/0013_payment_transactions_columns_and_reconciliation.sql`
+(the renumbered file that defines the function).
+
+**Verification**: after both fixes, reset a throwaway database, reapplied
+all 16 migrations end-to-end from empty with zero errors, then called
+`reconcile_successful_payment()` with realistic seeded data (a workspace,
+an `incomplete` subscription with a `pending_tx_ref`) and confirmed the
+full resulting state directly: the subscription's `status` flipped to
+`active` with `pending_tx_ref` correctly cleared to null, a
+`payment_transactions` row was inserted with the correct `card_token` and
+`provider_tx_id`, and an `audit_log` row was inserted with a valid `uuid`
+`target_id`. `src/db/schema.sql` was regenerated from this corrected,
+re-verified database and re-confirmed to apply standalone against a
+second fresh database with zero errors, per the same procedure used in
+Pass 1.
+
+As a side effect of this review, also found and fixed several stale
+migration-number references in code comments — leftovers from the Pass 1
+migration-directory consolidation and this pass's renumbering — pointing
+at migration numbers that no longer matched the file they described
+(`workspace.service.ts`, `resolveWorkspace.ts`, `billing.routes.ts`,
+`billing.service.ts`, `session.service.ts`, `persona.service.ts`, and
+three worker files). These were documentation-only; no behavior changed.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
-- The AI output-validation pipeline and billing-reconciliation RPC the
-  README highlights as the two highest-value places for tests — not
-  independently re-verified here.
+- The AI output-validation pipeline — the README's other highest-value
+  place for tests, alongside the billing-reconciliation RPC now covered
+  above — not independently re-verified here.
 - RLS policy content in `0007_rls_policies.sql` — flagged by the repo's
   own migrations README as needing an adversarial test suite before
   launch; not written in this pass.

@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0005: payment_transactions columns + atomic payment reconciliation
+-- 0013: payment_transactions columns + atomic payment reconciliation
 -- =============================================================================
 -- Part of the subscription/billing refinement pass. See
 -- SUBSCRIPTION_BILLING_REFINEMENT.md for the full findings this migration
@@ -39,7 +39,7 @@
 --    a subscription while permanently losing the payment_transactions
 --    record, since a retry's lookup (by pending_tx_ref, which the first
 --    call already cleared) would no longer match anything. Same class of
---    fix as allocate_session_sequence_index() in migration 0002, for the
+--    fix as allocate_session_sequence_index() in migration 0009, for the
 --    identical underlying reason: atomicity the app layer cannot
 --    otherwise guarantee through Supabase's REST interface.
 -- =============================================================================
@@ -102,10 +102,23 @@ begin
   returning id into v_payment_id;
 
   if p_audit_action is not null then
+    -- BUGFIX (found during a backend takeover review, mechanically verified
+    -- against a real Postgres 16 instance): audit_log.target_id is `uuid`
+    -- (see 0005_billing_domain.sql), but this insert used to cast
+    -- p_subscription_id to `text` first, which Postgres rejects outright
+    -- ("column target_id is of type uuid but expression is of type text").
+    -- Every other audit_log insert in the codebase (auth.service.ts,
+    -- workspace.service.ts, billing.service.ts, scheduler.ts,
+    -- attemptRenewalCharge.worker.ts) passes target_id as a raw uuid, never
+    -- text — this was the one outlier. Since this is the one statement in
+    -- the whole reconciliation path that previously could not run at all,
+    -- this bug was fully masked until the pending_tx_ref column (migration
+    -- 0012) was added back; fixing the cast here is what finally let this
+    -- function execute end-to-end.
     insert into audit_log (workspace_id, actor_user_id, action, target_type, target_id, metadata)
     values (
       p_workspace_id, p_audit_actor_user_id, p_audit_action, 'subscription',
-      p_subscription_id::text, coalesce(p_audit_metadata, '{}'::jsonb)
+      p_subscription_id, coalesce(p_audit_metadata, '{}'::jsonb)
     );
   end if;
 

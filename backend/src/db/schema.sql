@@ -4,7 +4,22 @@
 -- GENERATED, not hand-written. This file is the output of
 --   pg_dump --schema-only --schema=public
 -- run against a real Postgres 16 instance after applying every migration in
--- backend/src/db/migrations/ (0001 through 0015) in order, from empty.
+-- backend/src/db/migrations/ (0001 through 0016) in order, from empty.
+--
+-- REGENERATED after fixing two real bugs found and verified this same way:
+-- (1) subscriptions.pending_tx_ref and its partial unique index were
+-- referenced throughout the application and inside reconcile_successful_
+-- payment() as though they already existed, but no migration ever created
+-- them — added in 0012_subscriptions_pending_tx_ref.sql. (2)
+-- reconcile_successful_payment()'s audit_log insert cast its uuid
+-- p_subscription_id parameter to text, but audit_log.target_id is uuid —
+-- fixed in 0013_payment_transactions_columns_and_reconciliation.sql. Both
+-- bugs meant every successful-payment reconciliation path (checkout
+-- confirmation, webhook processing, renewal charges) failed outright at
+-- the database level; both are now mechanically verified fixed by actually
+-- calling reconcile_successful_payment() end-to-end against a real
+-- Postgres 16 instance and confirming the resulting subscriptions/
+-- payment_transactions/audit_log rows.
 --
 -- WHY THIS REPLACED THE PRIOR HAND-WRITTEN SNAPSHOTS: three independently
 -- hand-maintained copies of this file previously existed (backend/schema.sql,
@@ -31,7 +46,7 @@
 --      git history for the exact stub script used, or reconstruct from the
 --      auth.*/realtime.* references in backend/src/db/migrations/*.sql.
 --   3. psql <throwaway-db> -f backend/src/db/migrations/0001_*.sql
---      ... through 0015_*.sql, in numeric order, stopping immediately
+--      ... through 0016_*.sql, in numeric order, stopping immediately
 --      on any error — do not continue past a failure.
 --   4. pg_dump --schema-only --schema=public --no-owner --no-privileges
 --      <throwaway-db> > this file.
@@ -47,6 +62,7 @@
 -- PostgreSQL database dump
 --
 
+\restrict L9DA6Cj0LfWbGrhtIlUvO9OF5waXTTXar3pLv02exXohZSakPvatukxkg2sjIWw
 
 -- Dumped from database version 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)
 -- Dumped by pg_dump version 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)
@@ -309,10 +325,23 @@ begin
   returning id into v_payment_id;
 
   if p_audit_action is not null then
+    -- BUGFIX (found during a backend takeover review, mechanically verified
+    -- against a real Postgres 16 instance): audit_log.target_id is `uuid`
+    -- (see 0005_billing_domain.sql), but this insert used to cast
+    -- p_subscription_id to `text` first, which Postgres rejects outright
+    -- ("column target_id is of type uuid but expression is of type text").
+    -- Every other audit_log insert in the codebase (auth.service.ts,
+    -- workspace.service.ts, billing.service.ts, scheduler.ts,
+    -- attemptRenewalCharge.worker.ts) passes target_id as a raw uuid, never
+    -- text — this was the one outlier. Since this is the one statement in
+    -- the whole reconciliation path that previously could not run at all,
+    -- this bug was fully masked until the pending_tx_ref column (migration
+    -- 0012) was added back; fixing the cast here is what finally let this
+    -- function execute end-to-end.
     insert into audit_log (workspace_id, actor_user_id, action, target_type, target_id, metadata)
     values (
       p_workspace_id, p_audit_actor_user_id, p_audit_action, 'subscription',
-      p_subscription_id::text, coalesce(p_audit_metadata, '{}'::jsonb)
+      p_subscription_id, coalesce(p_audit_metadata, '{}'::jsonb)
     );
   end if;
 
@@ -829,7 +858,8 @@ CREATE TABLE public.subscriptions (
     current_period_end timestamp with time zone,
     trial_ends_at timestamp with time zone,
     canceled_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    pending_tx_ref text
 );
 
 
@@ -1632,6 +1662,13 @@ CREATE UNIQUE INDEX uq_subscriptions_one_active_per_workspace ON public.subscrip
 
 
 --
+-- Name: uq_subscriptions_pending_tx_ref; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_subscriptions_pending_tx_ref ON public.subscriptions USING btree (pending_tx_ref) WHERE (pending_tx_ref IS NOT NULL);
+
+
+--
 -- Name: user_skill_trend_user_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2315,4 +2352,5 @@ CREATE POLICY workspace_members_self_workspace ON public.workspace_members FOR S
 -- PostgreSQL database dump complete
 --
 
+\unrestrict L9DA6Cj0LfWbGrhtIlUvO9OF5waXTTXar3pLv02exXohZSakPvatukxkg2sjIWw
 
