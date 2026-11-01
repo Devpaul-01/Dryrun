@@ -399,7 +399,7 @@ export async function switchCurrentWorkspace(userId: string, targetWorkspaceId: 
   // FIX (HIGH-1): planId removed from this response — workspaces.plan_id
   // was never written anywhere and was always null (see
   // middleware/resolveWorkspace.ts's matching fix and
-  // db/migrations/0007, which drops the column). The workspace's real
+  // src/db/migrations/0015, which drops the column). The workspace's real
   // current plan is GET /billing/subscription, never this field.
   const ws = membership.workspaces as unknown as { id: string; name: string };
   return {

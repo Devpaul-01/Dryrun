@@ -74,7 +74,7 @@ export async function attemptRenewalChargeHandler(
     // reaching into raw_payload, which was populated inconsistently
     // depending on whether confirmCheckout or the webhook-reconciliation
     // path recorded the first successful payment (see
-    // db/migrations/0005 and billing.service.ts's confirmCheckout).
+    // src/db/migrations/0013 and billing.service.ts's confirmCheckout).
     const cardToken = lastTx?.card_token;
     const plan = sub.plans as any;
 

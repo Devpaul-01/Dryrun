@@ -534,7 +534,7 @@ export async function retrySession(sessionId: string, workspaceId: string, userI
 // surfacing as a generic 500 on the hottest write path in the product.
 // Fixed with allocate_session_sequence_index(), a single atomic
 // UPDATE ... RETURNING wrapped in a Postgres function (see
-// db/migrations/0002_atomic_session_sequence.sql) — the read-modify-write
+// src/db/migrations/0009_atomic_session_sequence.sql) — the read-modify-write
 // now happens as one indivisible statement at the database level, the
 // same class of fix already applied elsewhere in this codebase via
 // Lua-scripted Redis primitives (config/redis.ts).

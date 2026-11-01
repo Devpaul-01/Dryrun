@@ -64,7 +64,7 @@ router.post(
  * to a different plan in place, rather than the previous only-option of
  * calling POST /checkout again (which created a second, independent
  * subscription row — see billing.service.ts's changePlan for the full
- * rationale and db/migrations/0006 for the database-level backstop).
+ * rationale and src/db/migrations/0014 for the database-level backstop).
  */
 router.post(
   '/change-plan',

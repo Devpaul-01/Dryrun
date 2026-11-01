@@ -23,7 +23,7 @@ export async function extractPersonaSourceHandler(
   // payload's copy — this is the source of truth the DB-lookup design in
   // audit finding C1a moved to, so a value on the row always wins. Falling
   // back to job.data.scenarioType covers a persona_sources row written
-  // before db/migrations/0001_persona_sources_scenario_type.sql landed,
+  // before src/db/migrations/0008_persona_sources_scenario_type.sql landed,
   // where the column will be null but the payload (on the pasted_text/url
   // paths, which always carried this field correctly) may still have it.
   const scenarioType = source.scenario_type ?? job.data.scenarioType ?? '';

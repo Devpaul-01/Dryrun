@@ -100,7 +100,7 @@ export async function createPersonaFromSource(input: {
       extracted_text: input.sourceKind === 'pasted_text' ? input.pastedText : null,
       status: input.sourceKind === 'pasted_text' ? 'extracted' : 'pending',
       // Durable source of truth for scenario_type across the ingestion
-      // worker chain — see db/migrations/0001_persona_sources_scenario_type.sql
+      // worker chain — see src/db/migrations/0008_persona_sources_scenario_type.sql
       // and the FINDING C1a note in FINAL_BACKEND_AUDIT.md. Every worker in
       // the chain has personaSourceId available and can read this directly
       // rather than relying on it surviving intact across job-payload hops.

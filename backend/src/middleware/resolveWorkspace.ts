@@ -13,7 +13,7 @@ export type WorkspaceRole = 'owner' | 'admin' | 'member';
  * genuine foot-gun for any caller that reasonably assumed it reflected
  * the workspace's current plan. The real source of truth is, and
  * remains, entitlements.ts's resolveEffectivePlan() /
- * GET /billing/subscription — see db/migrations/0007, which drops the
+ * GET /billing/subscription — see src/db/migrations/0015, which drops the
  * dead column entirely.
  */
 export interface ResolvedWorkspace {

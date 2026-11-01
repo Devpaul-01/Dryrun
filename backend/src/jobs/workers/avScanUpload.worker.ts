@@ -42,7 +42,7 @@ export async function avScanUploadHandler(job: Job<{ uploadId: string; workspace
     // directly off the persona_sources row (set at creation time by
     // persona.service.ts's createPersonaFromSource) rather than threaded
     // through the upload pipeline's job payload — see
-    // db/migrations/0001_persona_sources_scenario_type.sql. This avoids
+    // src/db/migrations/0008_persona_sources_scenario_type.sql. This avoids
     // coupling the generic upload system to persona-specific fields while
     // still closing the gap: every upload-originated persona previously
     // synthesized with an undefined scenario type.

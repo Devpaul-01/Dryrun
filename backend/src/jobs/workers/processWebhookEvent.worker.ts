@@ -60,7 +60,7 @@ export async function processWebhookEventHandler(job: Job<{ webhookEventId: stri
 
     // FIX (MED-5): atomic reconciliation via the same Postgres function
     // confirmCheckout uses — see billing.service.ts's confirmCheckout and
-    // db/migrations/0005 for the full rationale. This is the OTHER path
+    // src/db/migrations/0013 for the full rationale. This is the OTHER path
     // that can record a subscription's first successful payment, so it
     // needs the identical fix.
     //
