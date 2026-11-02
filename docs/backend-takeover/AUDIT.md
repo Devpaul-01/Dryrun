@@ -388,6 +388,40 @@ directly against Postgres: reproduced the two-rows-same-token state,
 then confirmed the logout-time delete removes only the logging-out
 user's row and leaves the other user's row untouched.
 
+## Pass 6 — Analytics module
+
+Date: 2026-11-02
+
+Reviewed `src/modules/analytics/` in full (`analytics.service.ts`,
+`posthog.client.ts`, `analytics.routes.ts`).
+
+**`analytics.service.ts` / `posthog.client.ts`**: clean. The dual-write
+(Postgres + PostHog) is correctly fire-and-forget — each write is
+independently try/caught so one backend's outage can't also break the
+other, and nothing here can surface as a request failure. `shutdownPostHog`
+(needed so PostHog's client-side event buffer actually flushes on exit,
+not silently dropped) is correctly wired into both graceful-shutdown
+paths (`server.ts`, `start-all.ts`). No bugs found.
+
+**`analytics.routes.ts` — stale/misleading comment, fixed**: the route's
+doc comment claimed `POST /analytics/events` accepts "a landing-page CTA
+click before any account exists," but that was never actually true — the
+route is mounted behind the same authenticated middleware chain as every
+other protected route, so an unauthenticated request is rejected before
+the handler runs. Confirmed there's no gap this comment was papering
+over: the real pre-account funnel (`demo_started`, `demo_message_sent`,
+`demo_completed`, `demo_converted`) is already covered by direct,
+server-side `trackEvent()` calls from the unauthenticated demo routes,
+which don't go through this endpoint at all — grepped every
+`trackEvent()` call site in the codebase to confirm. Not a security bug
+(the actual behavior is the safer of the two possible readings), but
+worth fixing since a future reader — including whoever builds the
+not-yet-started mobile client — could otherwise be misled into thinking
+this endpoint is callable pre-login. Also checked the endpoint's
+unconstrained `properties: z.record(...)` field for abuse potential;
+covered adequately by the global 1MB request-body limit and the
+standard authenticated rate limit, so no fix needed there.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
 - A real test suite (vitest) for the AI output-validation pipeline and
