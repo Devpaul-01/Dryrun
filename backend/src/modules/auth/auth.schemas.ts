@@ -27,6 +27,14 @@ export const verifyEmailSchema = z.object({
 export const resendVerificationSchema = z.object({}).optional();
 
 /**
+ * FIX (mobile-readiness review): optional because a web session logging
+ * out has no push token to send, and because a mobile client that hasn't
+ * registered a push token yet (e.g. push permission was denied) shouldn't
+ * be forced to send one.
+ */
+export const logoutSchema = z.object({ pushToken: z.string().min(1).optional() }).optional();
+
+/**
  * FIX (CRIT-7): the account-deletion response has always told the user
  * they can "recover it by logging back in" within 14 days, but no such
  * flow existed — authenticate.ts unconditionally blocks any request from

@@ -7,6 +7,7 @@ import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
 import { env } from '../../config/env';
 import * as authService from './auth.service';
+import * as pushService from '../notifications/push.service';
 import {
   signupSchema,
   loginSchema,
@@ -14,6 +15,7 @@ import {
   resetPasswordSchema,
   verifyEmailSchema,
   recoverAccountSchema,
+  logoutSchema,
 } from './auth.schemas';
 
 const router = Router();
@@ -73,9 +75,20 @@ router.post(
 router.post(
   '/logout',
   authenticate,
+  validate({ body: logoutSchema }),
   asyncHandler(async (req, res) => {
     const token = req.headers.authorization!.slice(7);
     await supabaseAdmin().auth.admin.signOut(token, 'local');
+    // FIX (mobile-readiness review): see push.service.ts's
+    // deregisterPushToken for the full rationale — without this, a push
+    // token survived logout indefinitely and a second account logging in
+    // on the same device would keep both users receiving each other's
+    // notifications. Only this device's own session is being revoked
+    // above ('local'), so only its own push token (if the client sent
+    // one) is deregistered here — not every token this user has.
+    if (req.body?.pushToken) {
+      await pushService.deregisterPushToken(req.user!.id, req.body.pushToken);
+    }
     res.json({ success: true });
   })
 );
@@ -85,6 +98,9 @@ router.post(
   authenticate,
   asyncHandler(async (req, res) => {
     await authService.logoutAllSessions(req.user!.id);
+    // Every session is being revoked here, so every push token this user
+    // has ever registered goes too — not just the calling device's.
+    await pushService.deregisterAllPushTokens(req.user!.id);
     res.json({ success: true });
   })
 );

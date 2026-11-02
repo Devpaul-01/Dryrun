@@ -340,6 +340,54 @@ succeeds on a complete valid response, exercising the same three cases
 the retry logic depends on. `npm run typecheck`, `build`, and `lint` all
 pass clean with no new warnings.
 
+## Pass 5 — Notifications module + a real mobile-readiness bug
+
+Date: 2026-11-02
+
+Reviewed `src/modules/notifications/` in full (`push.service.ts`,
+`email.service.ts`, `notifications.service.ts`, `notifications.routes.ts`)
+and every call site of `notify()`, as part of a broader pass covering the
+areas Pass 1 flagged as not yet reviewed (notifications is also the piece
+most directly relevant to the still-unbuilt Expo mobile client — this
+review doubled as the mobile-readiness check for push notifications,
+since there's no mobile client repo yet to inspect against).
+
+**`notifications.service.ts` / `email.service.ts`**: solid. Every
+notification gets a `notifications_log` row first regardless of channel
+or delivery success (the audit trail and in-app notification center's
+data source), delivery failure is swallowed rather than failing the
+triggering job (correct — a push/email hiccup shouldn't fail billing or
+AI work), and the `resend` dynamic import is backed by a real declared
+dependency. No bugs found.
+
+**Push-token schema/lifecycle — real bug found and fixed**:
+`push_tokens` is unique on `(user_id, token)`, not on `token` alone,
+which is correct in principle (an Expo push token is tied to one
+physical device + app install, not one user, so the same device can
+reasonably appear under one user's registration). But nothing ever
+removed a token proactively — only reactively, when Expo itself reported
+`DeviceNotRegistered`. Neither `/auth/logout` nor `/auth/logout-all`
+touched `push_tokens` at all. Reproduced the consequence directly
+against a real Postgres table: user A registers a token on a shared
+device, logs out (old behavior — no cleanup), user B logs into the same
+device and registers the identical token — both rows persist
+simultaneously, so **both users would keep receiving each other's push
+notifications indefinitely** on any handed-down or shared device, with
+no way to ever stop it short of a direct database deletion.
+
+Fixed with two additions to `push.service.ts` — `deregisterPushToken`
+(one token) and `deregisterAllPushTokens` (every token for a user) — and
+wired them into `auth.routes.ts`: `/logout` now accepts an optional
+`pushToken` in the body (the client's own currently-held token; optional
+because a web session or a client with push permission denied has none
+to send) and deregisters just that one row, matching that it only
+revokes the one device's session (`signOut(token, 'local')`);
+`/logout-all` deregisters every token for the user, matching that every
+session is being revoked there. Verified the fix's exact query shape
+directly against Postgres: reproduced the two-rows-same-token state,
+then confirmed the logout-time delete removes only the logging-out
+user's row and leaves the other user's row untouched.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
 - A real test suite (vitest) for the AI output-validation pipeline and

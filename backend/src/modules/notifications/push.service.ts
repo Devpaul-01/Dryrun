@@ -15,6 +15,28 @@ export async function registerPushToken(userId: string, token: string): Promise<
 }
 
 /**
+ * FIX (found during the backend-takeover mobile-readiness review): until
+ * now, a push token was only ever removed reactively, when Expo itself
+ * reported DeviceNotRegistered — never proactively on logout. Since
+ * push_tokens is unique on (user_id, token) rather than on token alone,
+ * an Expo push token (tied to one physical device + app install, not one
+ * user) that a second account registers on the same device doesn't
+ * replace the first account's row — both rows persist, so both users
+ * would keep receiving each other's push notifications indefinitely on a
+ * shared or handed-down device. Called from auth.routes.ts's /logout
+ * (the client's own currently-held token, if it sends one) and
+ * /logout-all (every token this user has ever registered, since every
+ * session is being revoked there).
+ */
+export async function deregisterPushToken(userId: string, token: string): Promise<void> {
+  await supabaseAdmin().from('push_tokens').delete().eq('user_id', userId).eq('token', token);
+}
+
+export async function deregisterAllPushTokens(userId: string): Promise<void> {
+  await supabaseAdmin().from('push_tokens').delete().eq('user_id', userId);
+}
+
+/**
  * Sends a push to every registered token for a user. Invalid/expired
  * tokens (Expo returns a DeviceNotRegistered error) are marked stale and
  * removed — never retried indefinitely against a dead token.
