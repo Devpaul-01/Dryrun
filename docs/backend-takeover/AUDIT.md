@@ -265,11 +265,88 @@ at migration numbers that no longer matched the file they described
 `billing.service.ts`, `session.service.ts`, `persona.service.ts`, and
 three worker files). These were documentation-only; no behavior changed.
 
+## Pass 4 — AI output-validation pipeline
+
+Date: 2026-11-02
+
+Reviewed `outputValidator.ts`'s Zod schemas (one per AI call type:
+live-turn chat, persona synthesis, debrief, skill scoring, playbook,
+session-comparison summary), `parseAndValidate()`, every call site in
+`ai.service.ts`, and how each caller handles a validation failure —
+specifically whether it has any retry/recovery path or just propagates
+the error, and whether that's actually safe for where it's called from.
+
+**Schemas themselves**: well-scoped. Numeric fields are range-bounded
+(`state_delta`'s three deltas explicitly clamped to ±15, all 0–100 scores
+bounded), `reasoning` fields require a non-empty string rather than
+accepting an empty placeholder, and markdown code-fence stripping in
+`parseAndValidate` handles the common "model wraps JSON in \`\`\`json"
+failure mode before parsing. No gaps found here.
+
+**Retry coverage audit**: `generateBuyerReply` (the live-turn call) is
+the only one of the six call types with its own reject→retry→fallback
+logic. Checked whether the other five are actually under-protected, or
+whether their callers compensate elsewhere:
+
+- `generateDebrief` and `generateSkillScores` are called only from
+  background job workers (`generateDebrief.worker.ts`,
+  `scoreSessionSkills.worker.ts`), both on the `ai-derivative` queue
+  (`attempts: 3`, exponential backoff) with no local try/catch — a
+  validation failure propagates and BullMQ genuinely retries the whole
+  job. `debrief.service.ts`'s own doc comment confirms this is the
+  intended design ("idempotent by design... a retried job never produces
+  duplicates"). Correct as-is.
+- `generateSessionComparisonSummary` already has its own try/catch in
+  `scoring.service.ts`'s `computeSessionComparison`, with a sensible
+  deterministic fallback summary sentence — the more important numeric
+  comparison is still saved even if the AI summary fails. Correct as-is.
+- `generatePersona` called from `synthesizePersona.worker.ts` (a
+  background job) deliberately swallows the error rather than rethrowing
+  — checked this isn't a bug: `persona.service.ts`'s `updatePersona`
+  comment confirms the intended recovery path for a failed synthesis is
+  the user manually completing the "failed" placeholder via
+  `PATCH /personas/:id`, not an automatic job retry. Correct as-is.
+- `generatePlaybookContent` and `generatePlaybookContent`'s regenerate
+  path are called synchronously from `POST /playbooks` and
+  `POST /playbooks/:id/regenerate` — no retry, but `errorHandler.ts`
+  correctly classifies an uncaught `ZodError`/`SyntaxError` as a generic
+  500 with no internal details leaked, and a user-initiated HTTP request
+  failing with no retry (the user can just click again) is standard,
+  acceptable REST behavior. Correct as-is.
+- **`generatePersona` called from `demo.service.ts`'s `startDemo` and
+  `session.service.ts`'s persona-less session-start path had no retry at
+  all** — both are synchronous, user-facing requests, same as the
+  playbook routes above, but `startDemo` specifically is an
+  **unauthenticated prospect's very first interaction with the
+  product** — a single transient AI validation hiccup there was a raw
+  500 with no second chance, strictly worse odds than every other AI
+  call type gets (either an in-function retry or a background-job
+  retry). This asymmetry was real enough to fix rather than just
+  document: added the same bounded reject-and-retry shape
+  `generateBuyerReply` already uses to `generatePersona` itself (in
+  `ai.service.ts`), so both affected call sites are fixed in one place
+  with no change to the worker path's existing (correct, intentional)
+  swallow-and-mark-failed behavior. Unlike the live-turn retry, a second
+  failure here still propagates rather than falling back to a fabricated
+  placeholder persona — a generic invented persona would be actively
+  misleading in a way a neutral zero-delta chat reply isn't, so letting
+  it fail through to each caller's existing handling (worker's catch, or
+  a 500 on the synchronous paths) is the safer choice.
+
+Verified the fix doesn't change the validation rules or retry wording
+pattern — confirmed `parseAndValidate` genuinely throws on malformed
+JSON and on schema-violating (but valid JSON) content, and genuinely
+succeeds on a complete valid response, exercising the same three cases
+the retry logic depends on. `npm run typecheck`, `build`, and `lint` all
+pass clean with no new warnings.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
-- The AI output-validation pipeline — the README's other highest-value
-  place for tests, alongside the billing-reconciliation RPC now covered
-  above — not independently re-verified here.
+- A real test suite (vitest) for the AI output-validation pipeline and
+  billing-reconciliation RPC — both now reviewed and, where real bugs
+  were found, fixed and mechanically verified, but neither has
+  regression tests yet to keep them that way. Proposed as the next
+  milestone.
 - RLS policy content in `0007_rls_policies.sql` — flagged by the repo's
   own migrations README as needing an adversarial test suite before
   launch; not written in this pass.

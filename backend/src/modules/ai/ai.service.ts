@@ -130,6 +130,25 @@ export async function generateBuyerReply(
   return { response, evaluationId };
 }
 
+/**
+ * FIX (found during the backend-takeover billing/AI-pipeline review):
+ * unlike generateBuyerReply above, this used to throw straight up to the
+ * caller on a single validation failure, with no retry at all. That's a
+ * reasonable trade-off for the one caller that already has its own
+ * retry/recovery story (synthesizePersona.worker.ts — BullMQ retries the
+ * whole job up to 3x, and a persisted failure surfaces to the user as an
+ * editable "failed" placeholder by design, see persona.service.ts's
+ * updatePersona comment). But two OTHER call sites are synchronous,
+ * user-facing requests with no retry of their own: demo.service.ts's
+ * startDemo (an unauthenticated prospect's very first interaction with
+ * the product) and session.service.ts's session-start-without-a-persona
+ * path. For those, a single transient validation hiccup was a raw 500
+ * with no second chance — worse odds than every other AI call type in
+ * the product gets. Added the same bounded reject-and-retry shape
+ * generateBuyerReply already uses, scoped to this one function so every
+ * caller benefits uniformly (the worker path is unaffected in practice,
+ * since BullMQ's retry was already there as a second layer).
+ */
 export async function generatePersona(input: {
   workspaceId: string;
   practiceProfile: { productDescription: string; targetAudience: string };
@@ -137,13 +156,25 @@ export async function generatePersona(input: {
   sourceText?: string;
 }) {
   const { systemPrompt, messages } = buildPersonaSynthesisPrompt(input);
-  const result = await callWithFallback('persona_synthesis', input.workspaceId, {
-    systemPrompt,
-    messages,
-    temperature: 0.75,
-    maxTokens: 500,
-  });
-  return parseAndValidate(personaSynthesisResponseSchema, result.content);
+  try {
+    const result = await callWithFallback('persona_synthesis', input.workspaceId, {
+      systemPrompt,
+      messages,
+      temperature: 0.75,
+      maxTokens: 500,
+    });
+    return parseAndValidate(personaSynthesisResponseSchema, result.content);
+  } catch (firstErr) {
+    log.warn({ err: firstErr, workspaceId: input.workspaceId }, 'First persona-synthesis attempt failed validation — retrying once');
+    const strictSystemPrompt = `${systemPrompt}\n\nSTRICT REMINDER: your previous response failed validation. Return ONLY the exact JSON shape specified — name, role, main_pain, skepticism_about, and hidden_motivations (a non-empty array) are all required. interest_score, trust_score, and confusion_score must each be numbers between 0 and 100. No other text.`;
+    const retryResult = await callWithFallback('persona_synthesis', input.workspaceId, {
+      systemPrompt: strictSystemPrompt,
+      messages,
+      temperature: 0.5,
+      maxTokens: 500,
+    });
+    return parseAndValidate(personaSynthesisResponseSchema, retryResult.content);
+  }
 }
 
 export async function generateDebrief(workspaceId: string, transcript: string, goal?: string) {
