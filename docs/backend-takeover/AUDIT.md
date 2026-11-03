@@ -572,6 +572,25 @@ blocked only incidentally). Also verified a genuine public IP literal
 (`8.8.8.8`) correctly passes the guard and reaches the actual network
 request, confirming the fix isn't over-broad.
 
+## Pass 9 — Realtime channels
+
+Date: 2026-11-03
+
+Reviewed `src/realtime/channels.ts` (the server's entire realtime
+surface — confirmed by grepping every file that references
+`realtime`/`publishStatus`/`supabaseAdmin().channel`; the other matches
+are just call sites and comments, not additional logic). Clean — a prior
+genuine channel-leak fix (`unsubscribe()` in `finally`) is already
+correctly in place, and every `publishStatus` call site only ever
+broadcasts an entity's own ID or a short hardcoded status string, never
+user-controlled free text, AI-generated content, or sensitive fields
+(persona details, session content, scores). The broadcast channel is
+purely a "something changed, go refetch via the authenticated REST API"
+signal, never the data source itself — no leak risk. Channel-subscription
+authorization itself lives in the RLS policy content
+(`0011_realtime_broadcast_authorization.sql`), out of scope for this
+pass per instruction. No bugs found.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
 - A real test suite (vitest) for the AI output-validation pipeline and
