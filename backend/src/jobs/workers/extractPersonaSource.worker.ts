@@ -44,6 +44,24 @@ export async function extractPersonaSourceHandler(
       else if (upload.mime_type.includes('word')) extractedText = await extractTextFromDocx(buffer);
       else if (upload.mime_type.startsWith('image/')) extractedText = await extractTextFromImage(buffer);
       else extractedText = buffer.toString('utf8').slice(0, 20000);
+
+      // FIX (found during the backend-takeover upload-pipeline review):
+      // avScanUpload.worker.ts sets uploads.status: 'processed' for every
+      // OTHER upload purpose once the AV scan passes, but for
+      // purpose: 'persona_source' it deliberately leaves status alone and
+      // hands off to this worker instead (see that file's own comment).
+      // This worker, however, never picked up that handoff — it updates
+      // persona_sources.status on both success and failure below, but
+      // never touched the underlying uploads row at all, leaving it
+      // stuck at 'processing' forever even after extraction fully
+      // succeeded. Harmless for purgeOrphanedUploads.worker.ts (which
+      // only targets status: 'uploaded', so this never caused data
+      // loss), but GET /uploads/:id — the endpoint a client polls to
+      // show upload progress — would never report anything past
+      // "processing" for a persona-source upload, however long the
+      // extraction has been enqueued or finished. Now finalized here,
+      // matching the non-persona-source branch's own convention.
+      await supabaseAdmin().from('uploads').update({ status: 'processed' }).eq('id', upload.id);
     }
 
     const containsFlaggedPii = source.source_kind === 'pasted_text' ? false : PII_PATTERN.test(extractedText);
@@ -58,6 +76,12 @@ export async function extractPersonaSourceHandler(
   } catch (err) {
     log.error({ err, personaSourceId }, 'Persona source extraction failed');
     await supabaseAdmin().from('persona_sources').update({ status: 'extraction_failed' }).eq('id', personaSourceId);
+    if (sourceKind === 'upload') {
+      // Same reasoning as the success path above — finalize the upload
+      // row's status rather than leaving it stuck at 'processing'
+      // indefinitely after a definitive, non-retryable failure.
+      await supabaseAdmin().from('uploads').update({ status: 'failed' }).eq('id', source.raw_reference);
+    }
     await publishStatus('persona', personaId, 'extraction_failed', {
       personaId,
       message: 'We could not process that source. Try pasting the text directly instead.',
