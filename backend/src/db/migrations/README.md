@@ -91,3 +91,18 @@ These migrations create tables only. You also need to create the
 `src/modules/files/upload.service.ts`) via the Supabase dashboard or CLI,
 with public access disabled — all access goes through signed URLs issued
 by this backend.
+
+**Set the bucket's own `file_size_limit` to 10MB (or lower) when you
+create it — do not rely on application code alone to enforce this.**
+Found during the backend-takeover mobile-readiness review:
+`upload.service.ts`'s `MAX_SIZE_BYTES` check only validates the
+CLIENT-DECLARED `size_bytes` field at signed-URL-issuance time, before
+any bytes are uploaded. The actual upload — `uploadToSignedUrl()` or an
+equivalent direct PUT to the signed URL — happens straight from the
+client to Supabase Storage and never passes back through this backend,
+so nothing in this codebase can enforce the real byte count. The
+installed `@supabase/storage-js` version's `createSignedUploadUrl()`
+doesn't take a size-limit parameter either (only `{ upsert }`) — the
+bucket-level setting is the only real enforcement point. Without it, a
+client that simply declares a small `size_bytes` value bypasses the 10MB
+cap entirely and can upload an arbitrarily large file.

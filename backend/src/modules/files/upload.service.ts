@@ -3,6 +3,16 @@ import { supabaseAdmin } from '../../config/supabase';
 import { ApiError } from '../../lib/apiError';
 import { enqueue } from '../../jobs/queues';
 
+// IMPORTANT: this only validates the client-DECLARED size_bytes field at
+// signed-URL-issuance time, below — it cannot enforce the actual byte
+// count of what gets uploaded, since the real upload goes straight from
+// the client to Supabase Storage via the signed URL and never passes
+// back through this backend. The real enforcement point is the
+// dryrun-uploads bucket's own `file_size_limit` setting, which must be
+// configured to match when the bucket is created (see
+// src/db/migrations/README.md's Storage bucket section) — the installed
+// @supabase/storage-js version's createSignedUploadUrl() has no
+// size-limit parameter of its own to pass through from here.
 const MAX_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
