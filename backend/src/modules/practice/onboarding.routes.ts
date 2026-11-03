@@ -43,10 +43,30 @@ router.post(
 router.get(
   '/status',
   asyncHandler(async (req, res) => {
-    // FIX (BACKEND_API_RECOMMENDATIONS.md finding B1): req.user is now the
-    // raw snake_case users row — onboarding_completed_at, not
-    // onboardingCompletedAt.
-    res.json({ onboarding_completed: !!req.user!.onboarding_completed_at });
+    // FIX (found during the backend-takeover coaching-module review, ahead
+    // of the mobile client build): this used to read
+    // req.user.onboarding_completed_at — a flag on the users table, set
+    // once, ever. But the actual onboarding DATA (practice_profiles —
+    // product description, target audience) is scoped per (user,
+    // workspace), same as everything else in this product. A user who
+    // completes onboarding in Workspace A and later joins Workspace B via
+    // invite would see onboarding_completed: true there too, despite
+    // having no practice profile in B — and then get a confusing 400
+    // ("Complete Instant Setup...") from session.service.ts's
+    // getPracticeProfile the moment they tried to start a session, having
+    // just been told they were done. Now derives the answer directly from
+    // whether a practice_profiles row exists for THIS workspace, making
+    // that table the single source of truth instead of a separately
+    // tracked flag that can drift from it. users.onboarding_completed_at
+    // itself is left in place (harmless, and POST /instant-setup still
+    // sets it) since nothing else in the codebase reads it.
+    const { data } = await supabaseAdmin()
+      .from('practice_profiles')
+      .select('id')
+      .eq('user_id', req.user!.id)
+      .eq('workspace_id', req.workspace!.id)
+      .maybeSingle();
+    res.json({ onboarding_completed: !!data });
   })
 );
 

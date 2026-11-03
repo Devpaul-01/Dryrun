@@ -422,6 +422,62 @@ unconstrained `properties: z.record(...)` field for abuse potential;
 covered adequately by the global 1MB request-body limit and the
 standard authenticated rate limit, so no fix needed there.
 
+## Pass 7 — Badges, curriculum, skill-trend, onboarding, dashboard
+
+Date: 2026-11-03
+
+Reviewed the remaining coaching/practice modules not yet covered by an
+earlier pass: `badges.service.ts`/`.routes.ts`, `curriculum.service.ts`/
+`.routes.ts`, `skillTrend.routes.ts`, `onboarding.routes.ts`,
+`dashboard.routes.ts`.
+
+**Badges, skill-trend, dashboard**: clean. Badge awarding correctly
+handles the concurrent-award race via an explicit unique-violation check
+(already fixed in this codebase's own history, re-verified independently
+rather than trusted from the comment). Skill-trend goal-achievement-rate
+and the dashboard aggregate are both correctly scoped by
+`(user_id, workspace_id)`, and `getAggregateTeamProgress` (the one place
+in the dashboard that shows cross-user data to non-member roles) returns
+only an aggregate average and count — never individual rows — and
+correctly excludes soft-deleted users. No bugs found.
+
+**`curriculum.service.ts`'s `dismissCurriculum` — fixed**: re-verified
+independently (not trusted from Pass 2's note) that this function's
+`(id, user_id)` scoping is correct — a prior AI sub-review had
+hallucinated a missing-scope finding here, and that's still not a real
+gap. But the update itself was fire-and-forget with no check that any
+row actually matched: passing a nonexistent or not-owned `curriculum_id`
+silently "succeeded" with no signal anything was wrong, unlike every
+other not-found/not-owned case in this module (`debrief.service.ts`,
+`playbook.service.ts`), which all surface a 404. Not a security issue —
+just fixed to match the established convention and give honest
+client-side feedback.
+
+**`onboarding.routes.ts`'s `GET /status` — real cross-workspace bug,
+fixed**: `onboarding_completed_at` lives on the `users` table — one flag
+per user, set once, ever — while the actual onboarding data
+(`practice_profiles`: product description, target audience) is correctly
+scoped per `(user_id, workspace_id)`, same as everything else in this
+product. A user who completes onboarding in Workspace A and later joins
+Workspace B via invite would see `onboarding_completed: true` in
+Workspace B too, despite having no practice profile there — then get a
+confusing 400 ("Complete Instant Setup...") from
+`session.service.ts`'s `getPracticeProfile` the moment they tried to
+start a session, having just been told they were done. Reproduced
+directly against Postgres: the exact scenario (profile exists in
+Workspace A only) confirmed the old logic reports `true` in both
+workspaces, while deriving the answer from `practice_profiles`
+existence for the CURRENT workspace instead correctly reports `true` in
+A and `false` in B. Fixed by having `GET /onboarding/status` query
+`practice_profiles` directly rather than reading the `users` flag,
+making that table the single source of truth instead of a separately
+tracked value that could drift from it. Flagged as worth fixing now
+rather than documenting for later specifically because the mobile
+onboarding flow hasn't been built yet — better to fix the contract
+before a client is built against the wrong one than after.
+`users.onboarding_completed_at` itself is left in place (harmless;
+nothing else reads it).
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
 - A real test suite (vitest) for the AI output-validation pipeline and
