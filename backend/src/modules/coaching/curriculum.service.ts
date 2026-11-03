@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../config/supabase';
+import { ApiError } from '../../lib/apiError';
 import { createLogger } from '../../config/logger';
 
 const log = createLogger('curriculum-service');
@@ -59,10 +60,23 @@ export async function getCurrentCurriculum(userId: string, workspaceId: string) 
   return data ?? null;
 }
 
+/**
+ * FIX (found during the backend-takeover coaching-module review): this
+ * used to be a fire-and-forget update with no check of whether any row
+ * actually matched. The (id, user_id) scoping was already correct — a
+ * user can't dismiss another user's curriculum plan — but passing a
+ * curriculum_id that doesn't exist, or belongs to someone else, silently
+ * "succeeded" from the client's perspective while doing nothing. Every
+ * other not-found/not-owned case in this module (debrief.service.ts,
+ * playbook.service.ts) surfaces a 404; this now matches that convention.
+ */
 export async function dismissCurriculum(curriculumId: string, userId: string) {
-  await supabaseAdmin()
+  const { data, error } = await supabaseAdmin()
     .from('curriculum_plans')
     .update({ status: 'dismissed' })
     .eq('id', curriculumId)
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .select('id')
+    .maybeSingle();
+  if (error || !data) throw ApiError.notFound('Curriculum plan not found.');
 }
