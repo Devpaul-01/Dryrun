@@ -478,6 +478,100 @@ before a client is built against the wrong one than after.
 `users.onboarding_completed_at` itself is left in place (harmless;
 nothing else reads it).
 
+## Pass 8 — Upload / AV-scan / persona-source extraction pipeline
+
+Date: 2026-11-03
+
+Reviewed `src/modules/files/` (`upload.routes.ts`, `upload.service.ts`,
+`avScan.service.ts`, `extraction.service.ts`) and the three workers that
+consume them (`avScanUpload.worker.ts`, `extractPersonaSource.worker.ts`,
+`purgeOrphanedUploads.worker.ts`).
+
+**Upload authorization, the AV-scan fail-safe design, and the orphan-purge
+job**: all clean. `completeUpload`/`getUpload`/`deleteUpload` correctly
+scope by `(id, workspace_id, user_id)` — re-verified independently, not
+trusted from the existing comment. `scanBuffer` correctly fails closed
+(rejects the file) if ClamAV itself is unreachable, rather than silently
+skipping the scan. `purgeOrphanedUploadsHandler` only targets
+`status: 'uploaded'`, so it was confirmed safe from the bug described
+next — it never touches a `'processing'` row.
+
+**Upload size cap — real deployment gap, documented**: `MAX_SIZE_BYTES`
+(10MB) only validates the client-DECLARED `size_bytes` field at
+signed-URL-issuance time; the actual upload bytes go straight from the
+client to Supabase Storage via the signed URL and never pass back
+through this backend, and the installed `@supabase/storage-js` version's
+`createSignedUploadUrl()` has no size-limit parameter to pass through
+here. A client that simply declares a small `size_bytes` bypasses the
+cap entirely. The real enforcement point is the `dryrun-uploads` bucket's
+own `file_size_limit` setting, which has to be configured when the
+bucket is created — documented explicitly in both
+`src/db/migrations/README.md`'s Storage bucket section and a code
+comment at `MAX_SIZE_BYTES` itself, since this can't be fixed from
+application code at all.
+
+**`uploads.status` stuck at `'processing'` forever for persona-source
+uploads — real bug, fixed**: `avScanUpload.worker.ts` sets
+`status: 'processed'` once the AV scan passes for every upload purpose
+EXCEPT `persona_source`, which it deliberately hands off to
+`extractPersonaSource.worker.ts` instead. That worker, however, updates
+`persona_sources.status` on both success and failure but never touched
+the underlying `uploads` row at all — so `uploads.status` stayed at
+`'processing'` indefinitely, even after extraction fully succeeded.
+Harmless for data integrity (confirmed `purgeOrphanedUploadsHandler`
+never touches it), but `GET /uploads/:id` — the endpoint a client polls
+to show upload progress — would never report anything past
+`"processing"`. Reproduced directly against Postgres (the exact
+before/after state) before fixing. Now finalizes `uploads.status` to
+`'processed'` or `'failed'` in both of `extractPersonaSourceHandler`'s
+own success/failure branches, matching the convention the
+non-persona-source path already follows. Flagged as worth fixing now,
+same reasoning as the onboarding-status fix above: better to get the
+upload-progress contract right before the mobile client is built
+against it.
+
+**SSRF via persona-source URLs — real, exploitable vulnerability, fixed**:
+`extraction.service.ts`'s `extractTextFromUrl` has long had a header
+comment describing "public-page fetch only" as a deliberate constraint,
+but that was only ever a stated intent — `persona.schemas.ts`'s
+`url: z.string().url()` validates well-formedness only, nothing about
+scheme or destination. Any authenticated user could submit a
+persona-source URL pointing at `169.254.169.254` (cloud instance
+metadata — a standard path to credential theft on AWS/GCP/Azure),
+`localhost`/an internal IP (this deployment's own Redis, or anything
+else on its private network), and this backend would fetch it from its
+own network position on their behalf. Not a hypothetical — grepped for
+any existing host/IP filtering anywhere in the request path and found
+none.
+
+Fixed with a new `assertPublicUrl` guard: rejects non-http(s) schemes,
+and for everything else resolves the hostname via DNS explicitly (using
+`dns.lookup` with `all: true` to see every resolved address) and checks
+every result against the private/reserved IPv4 and IPv6 ranges
+(loopback, link-local/cloud-metadata, the three RFC1918 ranges, IPv6
+unique-local and link-local) via Node's built-in `net.BlockList` —
+checking the hostname alone would be DNS-rebinding-vulnerable, since a
+domain can resolve differently at request time than at validation time,
+or simply be an IP literal already. Also switched `extractTextFromUrl` to
+follow redirects manually (`maxRedirects: 0` plus an explicit, bounded
+5-hop loop) specifically so each redirect hop is re-validated through
+the same guard before being followed — otherwise a redirect from an
+initially-public URL to a private address would bypass the check
+entirely, since axios's own built-in redirect-following happens after
+validation already passed.
+
+Verified directly (not just typechecked) against the real attack
+scenarios: cloud-metadata IP literal, loopback (both bracketed-IPv6 and
+plain), all three RFC1918 ranges, a hostname that resolves to loopback,
+`file://`/`gopher://` schemes — all nine correctly blocked, each via the
+intended code path with the intended error message (caught and fixed one
+real implementation gap along the way: a bracketed IPv6 literal like
+`[::1]` wasn't recognized by `net.isIP()` and fell through to the
+DNS-lookup branch instead of the direct IP-literal check, ending up
+blocked only incidentally). Also verified a genuine public IP literal
+(`8.8.8.8`) correctly passes the guard and reaches the actual network
+request, confirming the fix isn't over-broad.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
 - A real test suite (vitest) for the AI output-validation pipeline and

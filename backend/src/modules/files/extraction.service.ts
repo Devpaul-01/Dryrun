@@ -1,6 +1,9 @@
 import axios from 'axios';
+import dns from 'dns/promises';
+import net from 'net';
 import { createLogger } from '../../config/logger';
 import { env } from '../../config/env';
+import { ApiError } from '../../lib/apiError';
 
 const log = createLogger('extraction-service');
 const MAX_EXTRACTED_CHARS = 20000; // same cap as pasted-text sources, bounds prompt-stuffing risk
@@ -18,14 +21,134 @@ export async function extractTextFromDocx(buffer: Buffer): Promise<string> {
 }
 
 /**
+ * FIX (SSRF — found during the backend-takeover upload-pipeline review):
+ * this function's own header comment has long described "public-page
+ * fetch only" as a deliberate constraint, but until now that was only
+ * ever a stated intent, never actually enforced — persona.schemas.ts's
+ * `url: z.string().url()` validates that the input is well-formed as a
+ * URL, nothing about scheme or destination. Any authenticated user could
+ * submit a persona-source URL like `http://169.254.169.254/...` (cloud
+ * instance metadata — a well-known path to credential theft on AWS/GCP/
+ * Azure), `http://localhost:6379/...` (this deployment's own Redis), or
+ * any other internal address, and this backend would fetch it from its
+ * own network position on their behalf.
+ *
+ * Two checks, because a hostname-based check alone is DNS-rebinding-
+ * vulnerable (a domain can resolve to a public IP at validation time and
+ * a private one at request time, or simply BE an IP literal already):
+ *   1. Scheme must be http/https — rejects file://, gopher://, etc.
+ *   2. The hostname is resolved via DNS here, explicitly, and EVERY
+ *      resolved address is checked against the private/reserved ranges
+ *      below before axios ever makes the request. This doesn't fully
+ *      close a TOCTOU gap against a server that deliberately resolves
+ *      differently a few milliseconds later, but it closes the actual
+ *      reachable attack surface this product's own URLs would hit: IP
+ *      literals, and ordinary (non-adversarial) internal hostnames.
+ */
+const PRIVATE_IP_RANGES = new net.BlockList();
+// IPv4: loopback, link-local (incl. cloud metadata 169.254.169.254), the
+// three RFC1918 private ranges, and this-host (0.0.0.0/8).
+PRIVATE_IP_RANGES.addRange('127.0.0.0', '127.255.255.255', 'ipv4');
+PRIVATE_IP_RANGES.addRange('169.254.0.0', '169.254.255.255', 'ipv4');
+PRIVATE_IP_RANGES.addRange('10.0.0.0', '10.255.255.255', 'ipv4');
+PRIVATE_IP_RANGES.addRange('172.16.0.0', '172.31.255.255', 'ipv4');
+PRIVATE_IP_RANGES.addRange('192.168.0.0', '192.168.255.255', 'ipv4');
+PRIVATE_IP_RANGES.addRange('0.0.0.0', '0.255.255.255', 'ipv4');
+// IPv6: loopback (::1), unique local (fc00::/7), and link-local (fe80::/10).
+PRIVATE_IP_RANGES.addSubnet('::1', 128, 'ipv6');
+PRIVATE_IP_RANGES.addSubnet('fc00::', 7, 'ipv6');
+PRIVATE_IP_RANGES.addSubnet('fe80::', 10, 'ipv6');
+
+async function assertPublicUrl(url: string): Promise<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw ApiError.badRequest('That URL could not be parsed.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw ApiError.badRequest('Only http/https URLs are supported.');
+  }
+
+  // URL.hostname keeps the enclosing brackets for an IPv6 literal (e.g.
+  // "[::1]"), but net.isIP doesn't accept the bracketed form — strip them
+  // before checking, otherwise a bracketed IPv6 literal falls through to
+  // the DNS-lookup branch below instead of being checked directly (it
+  // still ends up blocked there today, since dns.lookup rejects the
+  // bracketed string as an invalid hostname too, but only incidentally —
+  // this makes the IP-literal check actually the one responsible for it).
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+  // An IP literal in the URL itself (net.isIP returns 0 for a non-IP
+  // hostname, 4 or 6 for a literal) — check it directly without a DNS
+  // round-trip.
+  if (net.isIP(hostname)) {
+    if (PRIVATE_IP_RANGES.check(hostname, net.isIPv6(hostname) ? 'ipv6' : 'ipv4')) {
+      throw ApiError.badRequest('That URL points to a non-public address and cannot be fetched.');
+    }
+    return parsed;
+  }
+
+  let addresses: string[];
+  try {
+    const records = await dns.lookup(hostname, { all: true, verbatim: true });
+    addresses = records.map((r) => r.address);
+  } catch {
+    throw ApiError.badRequest('That URL\'s host could not be resolved.');
+  }
+  if (addresses.length === 0) {
+    throw ApiError.badRequest('That URL\'s host could not be resolved.');
+  }
+  for (const address of addresses) {
+    if (PRIVATE_IP_RANGES.check(address, net.isIPv6(address) ? 'ipv6' : 'ipv4')) {
+      throw ApiError.badRequest('That URL points to a non-public address and cannot be fetched.');
+    }
+  }
+  return parsed;
+}
+
+const MAX_URL_REDIRECTS = 5;
+
+/**
  * Public-page fetch only — never anything behind a login. This is a
  * deliberate, stated constraint (architecture doc §2.2.2 of the product
  * blueprint): no LinkedIn-profile scraping, no authenticated-resource
  * fetching. A plain GET against a public URL and HTML-to-text extraction.
+ * assertPublicUrl above is what actually enforces "public" now, not just
+ * states it.
+ *
+ * Redirects are followed manually (axios's own maxRedirects is disabled
+ * below) specifically so each hop can be re-validated through
+ * assertPublicUrl before it's followed — an ordinary public page
+ * redirecting to a private address (deliberately, or via a compromised/
+ * misconfigured upstream) would otherwise bypass the check on the
+ * original URL entirely, since axios's built-in redirect-following
+ * happens after that check already passed. A bounded hop count (5, the
+ * same default axios itself normally uses) prevents a redirect loop from
+ * hanging the job indefinitely.
  */
 export async function extractTextFromUrl(url: string): Promise<string> {
-  const response = await axios.get(url, { timeout: 15000, maxContentLength: 5 * 1024 * 1024 });
-  const html = String(response.data);
+  let currentUrl = url;
+  let html: string | null = null;
+  for (let hop = 0; hop <= MAX_URL_REDIRECTS; hop++) {
+    await assertPublicUrl(currentUrl);
+    const response = await axios.get(currentUrl, {
+      timeout: 15000,
+      maxContentLength: 5 * 1024 * 1024,
+      maxRedirects: 0,
+      validateStatus: (status) => (status >= 200 && status < 300) || (status >= 300 && status < 400),
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.location;
+      if (!location) throw ApiError.badRequest('That URL redirected without a destination.');
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
+    html = String(response.data);
+    break;
+  }
+  if (html === null) {
+    throw ApiError.badRequest('That URL redirected too many times.');
+  }
   const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
