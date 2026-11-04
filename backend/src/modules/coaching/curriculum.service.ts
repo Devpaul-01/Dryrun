@@ -31,6 +31,30 @@ export async function recomputeCurriculum(userId: string, workspaceId: string): 
     (t) => !practicedTypes.has(t)
   );
 
+  // FIX (backend-takeover audit, Task #15): this used to be a bare insert
+  // with no supersession of the user's prior plan(s) — every recompute
+  // (triggered after each completed session) left its previous
+  // status: 'active' row behind forever, with nothing (no scheduled job,
+  // no expires_at check anywhere) ever transitioning it. Reproduced
+  // directly against Postgres: 5 recomputes for one user produced 5
+  // permanently 'active' rows. Harmless today only because both real
+  // read sites (getCurrentCurriculum below, and
+  // sendWeeklySummary.worker.ts) happen to order by created_at DESC
+  // .limit(1) — but that's incidental, not structural, and it's exactly
+  // the kind of landmine a future mobile-client endpoint (e.g. "show all
+  // my curriculum history") could trip over by reasonably assuming
+  // status: 'active' means currently active. Now explicitly supersedes
+  // any prior active plan for this user+workspace before inserting the
+  // new one, so status: 'active' stays a true singleton per user per
+  // workspace and the table stops growing unbounded over a user's
+  // lifetime of practice.
+  await supabaseAdmin()
+    .from('curriculum_plans')
+    .update({ status: 'superseded' })
+    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
+    .eq('status', 'active');
+
   await supabaseAdmin().from('curriculum_plans').insert({
     user_id: userId,
     workspace_id: workspaceId,
