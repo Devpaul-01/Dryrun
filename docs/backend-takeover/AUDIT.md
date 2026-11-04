@@ -686,6 +686,132 @@ scheduler and job-worker list — deferred to the next pass (job workers
 and scheduler), since this pass's scope was specifically the
 export/deletion pair.
 
+## Pass 11 — Scheduler and remaining job workers
+
+Date: 2026-11-04
+
+Reviewed `src/jobs/scheduler.ts`, `src/jobs/index.ts`, `src/jobs/queues.ts`,
+`src/jobs/deadLetterPagination.ts`, and every remaining worker not already
+covered by an earlier pass: `archiveOldSnapshots`, `attemptRenewalCharge`,
+`avScanUpload`, `generateDebrief`, `processWebhookEvent`,
+`purgeExpiredDemoSessions`, `recomputeCurriculum`, `recomputeSkillTrend`,
+`sampleAiScoringEvaluations`, `scoreSessionSkills`,
+`scoringConsistencyCheck`, `sendPaymentFailedEmail`, `sendWeeklySummary`,
+`summarizeConversation`, `synthesizePersona`.
+
+`scheduler.ts`/`index.ts`: clean, and extensively already fixed by prior
+work (documented findings C5, CRIT-1, HIGH-7, plus the migration off
+BullMQ's deprecated repeatable-jobs API to `upsertJobScheduler`). Every
+`SCHEDULES` entry has a matching `HANDLERS` entry; nothing registered
+with no handler or vice versa.
+
+**Bug found and fixed — unvalidated queue name in admin job-retry
+endpoint.** `queues.ts`'s `retryJob(queueName, jobId)` took
+`req.body.queue` validated only as `z.string()`, cast straight to
+`QueueName` with no membership check, then passed to `getQueue()`.
+Verified directly: `new Queue('totally-not-a-real-queue-name', ...)`
+constructs successfully with BullMQ — the constructor does no validation
+of its own — so an admin typo (or probing) silently created and cached
+an unbounded bogus `Queue` instance in the process-lifetime `_queues`
+Map, surfaced only as a confusing "Job not found" error rather than a
+clear "unknown queue" one. Fixed by validating against the real
+`QueueName` set before calling `getQueue`, and switched both of
+`retryJob`'s error paths from a plain `Error` (masked into a generic 500
+by `errorHandler.ts`) to `ApiError`, matching the rest of the codebase's
+convention.
+
+**Bug found and fixed — dead-letter pagination silently drops
+same-millisecond ties.** `deadLetterPagination.ts`'s watermark was a bare
+failedAt millisecond compared with strict less-than. When more failed
+jobs in one queue share the exact same millisecond than fit on a page,
+the window-widening loop in `fetchQueueOlderThan` stops the instant it
+collects `limit` qualifying jobs, even if more jobs at that identical
+boundary timestamp exist further from the tail; the next page's
+watermark then becomes that same timestamp, so the stranded jobs (also
+at that ms) never satisfy the strict `<` filter — `next_cursor` comes
+back `null` while real dead-letter jobs remain permanently unreachable.
+Reproduced directly with a fake BullMQ-shaped queue: 5 jobs at one
+millisecond + 3 at a later one, `limit=3` — 2 of 8 jobs vanished from the
+feed entirely across pagination, with pagination falsely reporting
+completion. Fixed by tracking which specific job IDs at the boundary
+millisecond have already been emitted (`excludeIds`) and using
+exact-set-exclusion as the tie-break, mirroring the `(createdAt, id)`
+compound-keyset pattern `lib/cursorPagination.ts` already uses for
+Postgres-backed cursors (adapted to a set, since same-millisecond ties
+can be more than one job, unlike a DB primary key). Verified against
+three scenarios — partial ties, an all-same-millisecond worst case, and
+the original concurrent-insert guarantee the file's own header comment
+claims — all three now walk every job exactly once with no skips or
+duplicates.
+
+**Bug found and fixed — unbounded `curriculum_plans` row growth.**
+`recomputeCurriculum` (triggered after every completed session) always
+inserted a new row with no supersession of the user's prior plan, and
+nothing anywhere (no scheduled job, no `expires_at` check) ever
+transitioned an old row's `status` away from `'active'`. Reproduced
+directly against Postgres: 5 recomputes for one user produced 5
+permanently active rows. Harmless today only incidentally — both real
+read sites (`getCurrentCurriculum`, `sendWeeklySummary.worker.ts`) happen
+to order by `created_at DESC .limit(1)` — but unbounded growth and a
+landmine for any future query (a mobile client's curriculum-history view,
+say) that reasonably assumes `status: 'active'` means currently active.
+Fixed by explicitly marking any prior active plan `'superseded'` before
+inserting the new one; verified against Postgres to produce exactly one
+active row per user+workspace after repeated recomputes.
+
+**Bug found and fixed — unescaped HTML in every transactional email
+template, the most severe finding of this pass.** No HTML-escaping
+existed anywhere in the email-building layer
+(`notifications/email.service.ts`). `buildWorkspaceInviteEmailHtml`
+interpolated `workspaceName` and `inviterName` — both directly
+user-controlled (`display_name` up to 120 chars, workspace `name` up to
+200 chars, length-bounded but never escaped) — straight into the email
+body. Verified with a real exploit payload: setting a display name to an
+`<a href="https://phishing.example/login">Click here to verify your
+DryRun account</a>` tag and sending a workspace invite produces exactly
+that clickable phishing link, styled as ordinary invite text, in a real
+transactional email sent from DryRun's own address — reachable by any
+authenticated user against anyone they invite, no special privilege
+needed; an `<img onerror=...>` payload in a workspace name was verified
+the same way. The same gap existed in `sendWeeklySummary.worker.ts`'s
+`buildWeeklySummaryEmailHtml` for AI-generated debrief/curriculum text
+(`bestCoachableMoment` is raw AI output — `outputValidator.ts` only
+constrains it to `z.string().min(1)`, no escaping) and badge
+label/description (hardcoded today, but no reason to leave unescaped).
+Fixed by adding a shared `escapeHtml()` helper and applying it to every
+interpolated value across both files that isn't one of our own
+app-controlled URLs; verified the fix blocks the same exploit payloads
+(now rendered as inert escaped text) while leaving legitimate names with
+apostrophes/unicode readable.
+
+Everything else reviewed clean, with no changes needed:
+`archiveOldSnapshots` (bounded batches, correctly waits for aggregates
+before pruning raw detail); `attemptRenewalCharge` (dunning schedule,
+distributed lock, and the CRIT-1/CRIT-3/HIGH-10/MED-4/MED-5 fixes already
+in place and verified sound — `chargeRenewal` always resolves to
+`{success: false}` on any provider/network error rather than throwing, so
+the dunning path is never silently skipped); `avScanUpload` (consistent
+with the `extractPersonaSource`/upload-status fix from an earlier pass);
+`generateDebrief` and its `debrief.service.ts` backing (already
+cross-tenant-scoped); `processWebhookEvent` (the documented cross-tenant
+billing-misattribution fix is sound; leaving `pending_tx_ref` set on a
+failed verification is deliberate, matching `confirmCheckout`'s own
+retry-friendly pattern); `purgeExpiredDemoSessions` (simple, idempotent);
+`recomputeSkillTrend` (append-only by design — `user_skill_trend` is a
+time-series table, confirmed by its non-unique `(user_id, workspace_id,
+period_start DESC)` index and both real read sites ordering/limiting as
+a series, not a single current row); `sampleAiScoringEvaluations`
+(correct; the `Math.random()`-based shuffle is statistically biased but
+inconsequential for human spot-review sampling); `scoreSessionSkills`;
+`scoringConsistencyCheck`/`scoringConsistency.ts` (a cheap rule-based
+drift signal, deliberately not a second AI call, per the architecture
+doc); `sendPaymentFailedEmail` (a retried duplicate send is a mild
+annoyance, not an idempotency-critical issue, unlike a charge);
+`summarizeConversation` (prompt-injection-aware framing, documented
+race-condition fix already in place); `synthesizePersona` (the
+documented cross-member-profile-mixing and optimistic-concurrency fixes
+are both sound).
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
 - A real test suite (vitest) for the AI output-validation pipeline and
