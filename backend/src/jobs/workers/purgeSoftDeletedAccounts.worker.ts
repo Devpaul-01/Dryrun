@@ -79,8 +79,17 @@ export async function purgeSoftDeletedAccountsHandler(_job: Job): Promise<void> 
         continue;
       }
 
-      // Cascades handle practice_sessions, personas, practice_profiles, etc.
-      // per the FK cascade rules (db/migrations).
+      // FIX (0017_fk_actions_for_account_purge.sql): practice_sessions,
+      // practice_profiles, badges, uploads, etc. cascade-delete here. But
+      // personas and playbooks are deliberately workspace-shared, reusable
+      // assets (personas.reusable; both scoped by workspace_id, not just
+      // creator) that are meant to keep working for the rest of the
+      // workspace after their creator leaves — those two instead have
+      // created_by_user_id SET NULL rather than being deleted, which this
+      // DELETE now relies on: before that migration, a NO ACTION default
+      // on those two FKs made this call throw a foreign-key-violation for
+      // any user who had ever created a persona or playbook (i.e. almost
+      // every real user), failing the whole compliance-relevant batch.
       await supabaseAdmin().from('users').delete().eq('id', user.id);
       await supabaseAdmin().auth.admin.deleteUser(user.id);
       log.info({ userId: user.id }, 'Hard-purged soft-deleted account');
