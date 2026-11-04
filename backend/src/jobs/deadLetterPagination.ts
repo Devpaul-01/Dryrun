@@ -45,8 +45,37 @@ export interface DeadLetterJob {
   attempts_made: number;
 }
 
+/**
+ * FIX (backend-takeover audit, Task #15): a bare `{ ms }` watermark per
+ * queue silently drops jobs when more than `limit` failures in a queue
+ * share the exact same failedAt millisecond at the page boundary.
+ * Reproduced directly: 5 jobs at ts=1000 + 3 jobs at ts=2000, limit=3.
+ * Page 1 returns the 3 @2000 jobs, watermark becomes 2000. Page 2 widens
+ * its tail window until it collects `limit` (3) qualifying jobs — which
+ * it finds among the @1000 group — and stops there, the moment it has
+ * "enough", even though 2 MORE jobs at that identical timestamp (further
+ * from the tail) were left unscanned. Worse, the next watermark is then
+ * set to 1000 (same as what's left behind), so "has more" asks for
+ * failedAtMs < 1000, which the stranded jobs (also =1000) never satisfy
+ * — next_cursor comes back null while 2 real dead-letter jobs are
+ * unreachable forever. 2 of 8 jobs vanished from the feed in that
+ * reproduction. Fixed by tracking which specific job IDs at the boundary
+ * timestamp have already been emitted (`excludeIds`), so the tie-break
+ * is exact-set-exclusion rather than relying on the timestamp alone to
+ * separate "seen" from "unseen" — mirroring the `(createdAt, id)`
+ * compound-keyset pattern lib/cursorPagination.ts already uses for
+ * Postgres-backed cursors, adapted here to a set (same-millisecond ties
+ * can be more than one job) instead of a single trailing id, since job
+ * IDs aren't guaranteed lexicographically sortable the way a DB primary
+ * key is.
+ */
+interface DeadLetterWatermark {
+  ms: number;
+  excludeIds: string[];
+}
+
 interface DeadLetterCursor {
-  watermarks: Partial<Record<DeadLetterQueueName, number>>;
+  watermarks: Partial<Record<DeadLetterQueueName, DeadLetterWatermark>>;
 }
 
 function decodeDeadLetterCursor(cursor?: string): DeadLetterCursor | null {
@@ -82,17 +111,27 @@ interface FetchedJob {
 }
 
 /**
- * Fetches up to `limit` of a single queue's failed jobs with failedAt
- * strictly less than `watermark` (or the newest `limit` jobs overall if
- * `watermark` is undefined — i.e. the first page). Widens the tail window
- * geometrically if the first pull doesn't surface enough qualifying jobs
- * (can happen with many same-millisecond failures, or a burst of newer
- * failures pushing target jobs further from the tail than `limit` alone
- * would reach), stopping once the whole queue has been scanned.
+ * Fetches up to `limit` of a single queue's failed jobs older than
+ * `watermark` (or the newest `limit` jobs overall if `watermark` is
+ * undefined — i.e. the first page). "Older than" means: failedAtMs
+ * strictly less than `watermark.ms`, OR failedAtMs === watermark.ms and
+ * the job's id is not in `watermark.excludeIds` (the ids already emitted
+ * at that exact boundary millisecond) — see the DeadLetterWatermark
+ * comment above for why a bare `ms` comparison alone silently drops
+ * same-millisecond siblings. Widens the tail window geometrically if the
+ * first pull doesn't surface enough qualifying jobs, stopping once the
+ * whole queue has been scanned.
  */
+function isOlderThanWatermark(job: FetchedJob, watermark: DeadLetterWatermark): boolean {
+  if (job.failedAtMs === null) return true;
+  if (job.failedAtMs < watermark.ms) return true;
+  if (job.failedAtMs === watermark.ms && !watermark.excludeIds.includes(job.id)) return true;
+  return false;
+}
+
 async function fetchQueueOlderThan(
   queue: Queue,
-  watermark: number | undefined,
+  watermark: DeadLetterWatermark | undefined,
   limit: number
 ): Promise<FetchedJob[]> {
   const total = await queue.getFailedCount();
@@ -106,15 +145,14 @@ async function fetchQueueOlderThan(
     const startRank = Math.max(0, endRank - windowSize + 1);
     const raw = await queue.getFailed(startRank, endRank);
 
-    collected = raw
-      .map((job) => ({
-        id: job.id ?? '',
-        name: job.name,
-        failedReason: job.failedReason ?? '',
-        failedAtMs: jobFailedAtMs(job),
-        attemptsMade: job.attemptsMade ?? 0,
-      }))
-      .filter((job) => watermark === undefined || job.failedAtMs === null || job.failedAtMs < watermark);
+    const mapped: FetchedJob[] = raw.map((job) => ({
+      id: job.id ?? '',
+      name: job.name,
+      failedReason: job.failedReason ?? '',
+      failedAtMs: jobFailedAtMs(job),
+      attemptsMade: job.attemptsMade ?? 0,
+    }));
+    collected = watermark === undefined ? mapped : mapped.filter((job) => isOlderThanWatermark(job, watermark));
 
     if (collected.length >= limit || startRank === 0) break;
     windowSize *= 2;
@@ -150,15 +188,26 @@ export async function fetchDeadLetterPage(
   allCandidates.sort((a, b) => (b.failedAtMs ?? 0) - (a.failedAtMs ?? 0));
   const pageJobs = allCandidates.slice(0, limit);
 
-  const newWatermarks: Partial<Record<DeadLetterQueueName, number>> = { ...priorWatermarks };
+  const newWatermarks: Partial<Record<DeadLetterQueueName, DeadLetterWatermark>> = { ...priorWatermarks };
   for (const name of QUEUE_NAMES) {
     const thisQueueItems = pageJobs.filter((j) => j.queue === name);
     if (thisQueueItems.length > 0) {
-      // Oldest item from this queue that made it into the page becomes
-      // its new watermark — the next page asks for "older than this."
+      // Oldest item from this queue that made it into the page sets the
+      // new boundary millisecond. excludeIds collects every emitted item
+      // (from this page AND any prior page, if the boundary ms is
+      // unchanged) at exactly that millisecond, so a same-millisecond
+      // sibling that didn't fit on this page is never mistaken for
+      // already-seen on the next one.
       const oldestIncluded = thisQueueItems[thisQueueItems.length - 1];
       if (oldestIncluded.failedAtMs !== null) {
-        newWatermarks[name] = oldestIncluded.failedAtMs;
+        const boundaryMs = oldestIncluded.failedAtMs;
+        const priorExcludeIds =
+          priorWatermarks[name]?.ms === boundaryMs ? priorWatermarks[name]!.excludeIds : [];
+        const idsAtBoundaryThisPage = thisQueueItems.filter((j) => j.failedAtMs === boundaryMs).map((j) => j.id);
+        newWatermarks[name] = {
+          ms: boundaryMs,
+          excludeIds: [...new Set([...priorExcludeIds, ...idsAtBoundaryThisPage])],
+        };
       }
     }
     // If this queue contributed nothing to the page, its watermark is
