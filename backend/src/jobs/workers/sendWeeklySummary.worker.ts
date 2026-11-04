@@ -1,6 +1,7 @@
 import { Job } from 'bullmq';
 import { supabaseAdmin } from '../../config/supabase';
 import { notify } from '../../modules/notifications/notifications.service';
+import { escapeHtml } from '../../modules/notifications/email.service';
 import { createLogger } from '../../config/logger';
 
 const log = createLogger('send-weekly-summary-worker');
@@ -154,6 +155,23 @@ async function gatherWeeklySummaryData(userId: string, workspaceId: string): Pro
   };
 }
 
+/**
+ * FIX (backend-takeover audit, Task #15): this used to interpolate
+ * bestCoachableMoment (AI-generated free text — outputValidator.ts only
+ * constrains it to z.string().min(1), no HTML-escaping) and
+ * newBadgesThisWeek's labels/descriptions and currentCurriculumWeakness
+ * directly into the email HTML with no escaping, the same gap found and
+ * fixed in email.service.ts's buildWorkspaceInviteEmailHtml (see that
+ * function's comment for the full finding and a verified exploit
+ * example). Badge label/description are hardcoded app constants today
+ * (badges.service.ts's candidates array) so not currently reachable by
+ * an attacker, but bestCoachableMoment is genuinely AI-generated from a
+ * conversation the AI reads and reasons about — the same class of
+ * prompt-injection-adjacent risk as any LLM output rendered as HTML
+ * without escaping. All dynamic strings now escaped via the shared
+ * escapeHtml helper; AXIS_LABELS values stay unescaped since they're a
+ * fixed, hardcoded lookup table, not interpolation of external input.
+ */
 function buildWeeklySummaryEmailHtml(data: WeeklySummaryData): string {
   const sections: string[] = [];
 
@@ -175,8 +193,8 @@ function buildWeeklySummaryEmailHtml(data: WeeklySummaryData): string {
 
   if (data.strongestAxis || data.weakestAxis) {
     const parts: string[] = [];
-    if (data.strongestAxis) parts.push(`<strong>${AXIS_LABELS[data.strongestAxis] ?? data.strongestAxis}</strong> was your strongest area`);
-    if (data.weakestAxis) parts.push(`<strong>${AXIS_LABELS[data.weakestAxis] ?? data.weakestAxis}</strong> is the best place to focus next`);
+    if (data.strongestAxis) parts.push(`<strong>${escapeHtml(AXIS_LABELS[data.strongestAxis] ?? data.strongestAxis)}</strong> was your strongest area`);
+    if (data.weakestAxis) parts.push(`<strong>${escapeHtml(AXIS_LABELS[data.weakestAxis] ?? data.weakestAxis)}</strong> is the best place to focus next`);
     sections.push(`<p>${parts.join(', and ')}.</p>`);
   }
 
@@ -190,17 +208,17 @@ function buildWeeklySummaryEmailHtml(data: WeeklySummaryData): string {
   }
 
   if (data.newBadgesThisWeek.length > 0) {
-    const badgeItems = data.newBadgesThisWeek.map((b) => `<li><strong>${b.label}</strong> — ${b.description}</li>`).join('');
+    const badgeItems = data.newBadgesThisWeek.map((b) => `<li><strong>${escapeHtml(b.label)}</strong> — ${escapeHtml(b.description)}</li>`).join('');
     sections.push(`<p>New achievements this week:</p><ul>${badgeItems}</ul>`);
   }
 
   if (data.bestCoachableMoment) {
-    sections.push(`<p><em>Coaching highlight from this week:</em> ${data.bestCoachableMoment}</p>`);
+    sections.push(`<p><em>Coaching highlight from this week:</em> ${escapeHtml(data.bestCoachableMoment)}</p>`);
   }
 
   if (data.currentCurriculumWeakness) {
     sections.push(
-      `<p><em>Suggested focus for next week:</em> your current recommended curriculum is built around strengthening <strong>${AXIS_LABELS[data.currentCurriculumWeakness] ?? data.currentCurriculumWeakness}</strong>.</p>`
+      `<p><em>Suggested focus for next week:</em> your current recommended curriculum is built around strengthening <strong>${escapeHtml(AXIS_LABELS[data.currentCurriculumWeakness] ?? data.currentCurriculumWeakness)}</strong>.</p>`
     );
   }
 

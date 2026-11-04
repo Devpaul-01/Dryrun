@@ -37,6 +37,39 @@ export async function sendEmail(input: SendEmailInput): Promise<void> {
   log.info({ to: input.to, subject: input.subject }, `[console email] ${input.html.slice(0, 400)}`);
 }
 
+/**
+ * FIX (backend-takeover audit, Task #15): no HTML-escaping existed
+ * anywhere in the email-building layer. buildWorkspaceInviteEmailHtml
+ * interpolated workspaceName and inviterName — both directly
+ * user-controlled (profile.routes.ts: display_name up to 120 chars;
+ * workspace.schemas.ts: name up to 200 chars, length-bounded but never
+ * HTML-escaped) — straight into the email's <strong>/body text with no
+ * escaping at all. Verified directly: setting a display name to
+ * `<a href="https://phishing.example/login">Click here to verify your
+ * DryRun account</a>` and sending a workspace invite produces exactly
+ * that clickable phishing link, styled as ordinary invite text, in a
+ * real transactional email sent from DryRun's own address to the
+ * invitee — a stored HTML-injection vulnerability reachable by any
+ * authenticated user against anyone they invite, no admin privilege or
+ * special access needed. A workspace name containing an <img onerror=...>
+ * payload was verified the same way.
+ *
+ * Fixed by escaping every interpolated value that didn't already go
+ * through `link` (hrefs built from our own app URLs, not user input, so
+ * intentionally left unescaped — escaping `&` in a URL query string
+ * would corrupt it). Applied here and to buildWeeklySummaryEmailHtml in
+ * sendWeeklySummary.worker.ts, which had the same gap for AI-generated
+ * debrief/curriculum text.
+ */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function buildVerificationEmailHtml(link: string): string {
   return `<p>Welcome to DryRun. Confirm your email to get started:</p>
 <p><a href="${link}">${link}</a></p>
@@ -50,7 +83,7 @@ export function buildPasswordResetEmailHtml(link: string): string {
 }
 
 export function buildWorkspaceInviteEmailHtml(workspaceName: string, inviterName: string, link: string): string {
-  return `<p>${inviterName} invited you to join <strong>${workspaceName}</strong> on DryRun.</p>
+  return `<p>${escapeHtml(inviterName)} invited you to join <strong>${escapeHtml(workspaceName)}</strong> on DryRun.</p>
 <p><a href="${link}">${link}</a></p>
 <p>This invite expires in 7 days.</p>`;
 }
