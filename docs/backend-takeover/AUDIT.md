@@ -591,6 +591,101 @@ authorization itself lives in the RLS policy content
 (`0011_realtime_broadcast_authorization.sql`), out of scope for this
 pass per instruction. No bugs found.
 
+## Pass 10 — Export/GDPR flows
+
+Date: 2026-11-04
+
+Reviewed `src/modules/auth/export.routes.ts`,
+`src/jobs/workers/exportUserData.worker.ts`, and
+`src/jobs/workers/purgeSoftDeletedAccounts.worker.ts` — the full
+account-export and hard-deletion surface.
+
+`export.routes.ts`: clean. Correctly scoped to the requesting user,
+rate-limited to 3/hour via `exportRateLimit`. No idempotency key on the
+job enqueue, but judged acceptable given the loose rate limit (worst
+case: a couple of redundant export emails, not a correctness/security
+issue).
+
+**Bug found and fixed — GDPR export completeness.** The export payload
+previously included only `users` (4 fields), `practice_sessions` (full
+row), `personas` (full row), and `playbooks` (full row), each via a
+top-level `.select('*')`. On Supabase/PostgREST, `.select('*')` never
+auto-joins related tables, so every child table holding the *actual
+content* of a session, persona, or playbook was silently omitted:
+`session_messages` (the literal sales-call transcript), `session_debriefs`
+(AI feedback), `session_skill_scores`, `session_goals`,
+`session_context_summaries`, `session_state_snapshots`,
+`session_message_attachments`, `session_retries` (all keyed by
+`session_id` → `practice_sessions.user_id`); `persona_sources` (keyed by
+`persona_id` → `personas.created_by_user_id`), including any extracted
+text flagged for PII; `playbook_versions` (keyed by `playbook_id` →
+`playbooks.created_by_user_id`) — i.e. the actual script content
+(opening message, discovery questions, objection responses), not just
+the playbook's title row. Also missing entirely: `practice_profiles`,
+`curriculum_plans`, `badges`, `user_skill_trend`,
+`notification_preferences`, `push_tokens`, `uploads` — all directly
+`user_id`-scoped tables with no join needed.
+
+Verified the gap directly against Postgres: inserted a
+`practice_sessions` row and a `session_messages` row referencing it,
+confirmed the old query shape (`practice_sessions.select('*')` alone)
+never returns the message row, then confirmed the new
+`session_id IN (...)` fan-out query correctly retrieves it. Fixed by
+fetching session/persona/playbook IDs first, then fanning out to every
+owned child table in parallel, with an empty-array guard on each `.in()`
+call (skip the query rather than sending `.in(col, [])`).
+
+Deliberately still excluded from the export: workspace-scoped tables
+(`subscriptions`, `payment_transactions`, `workspace_members`,
+`workspace_invites`) since they involve other workspace members' data
+and this single-user-keyed job has no workspace-level access control to
+safely scope a "my billing history" export; and internal/system tables
+(`plans`, `system_config`, `webhook_events`, `webhook_signature_failures`,
+`audit_log`, `analytics_events`, `ai_usage_log`,
+`ai_scoring_evaluations`, `demo_sessions`,
+`email_verification_tokens`/`password_reset_tokens` — security
+artifacts, not personal data a user needs returned to them).
+
+**Bug found and fixed — hard account purge throws on almost every real
+user.** `purgeSoftDeletedAccountsHandler`'s hard-delete step is commented
+"Cascades handle practice_sessions, personas, practice_profiles, etc. per
+the FK cascade rules" — but `personas.created_by_user_id`,
+`playbooks.created_by_user_id`, and `uploads.user_id` were defined with
+no `ON DELETE` action at all (`0003_practice_domain.sql`), defaulting to
+`NO ACTION`. Reproduced directly against Postgres: deleting a `users` row
+that owns a persona raises `ERROR: update or delete on table "users"
+violates foreign key constraint "personas_created_by_user_id_fkey"`
+rather than cascading or nulling anything. Since creating a persona is
+core product usage, this isn't an edge case — the purge job would throw
+for nearly every deletion-requesting user, get caught by the worker's
+outer `catch`, log an ALERT, and re-throw, so the whole batch fails and
+keeps re-alerting via BullMQ retries instead of ever completing a clean
+deletion.
+
+Fixed with `0017_fk_actions_for_account_purge.sql`, matching each
+table's actual semantics rather than applying one blanket rule:
+`personas`/`playbooks` get `ON DELETE SET NULL` (both are deliberately
+workspace-shared, reusable assets — `personas.reusable`, both scoped by
+`workspace_id` not just creator — meant to keep working for the rest of
+the workspace after their creator leaves, per `upload.service.ts`'s own
+comment distinguishing shared assets from individual uploads); `uploads`
+gets `ON DELETE CASCADE` instead, since `uploads.user_id` is a `NOT NULL`
+strict access-control scope used throughout `upload.service.ts` (every
+read/complete/delete requires it to match the requesting user), not a
+shared asset — an upload with no owning user has no legitimate reason to
+survive, matching its sibling `workspace_id` FK's existing cascade.
+Verified both halves directly against Postgres: after the migration, the
+same `DELETE FROM users` that previously threw now succeeds, with the
+owned persona surviving (`created_by_user_id` nulled) and the owned
+upload row gone (cascaded away). Also corrected the worker's own comment,
+which had asserted personas cascade when they in fact (now, correctly)
+get nulled, not deleted.
+
+Not yet reviewed in this pass: `checkRenewalsDue`/the rest of the
+scheduler and job-worker list — deferred to the next pass (job workers
+and scheduler), since this pass's scope was specifically the
+export/deletion pair.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
 - A real test suite (vitest) for the AI output-validation pipeline and
