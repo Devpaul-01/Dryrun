@@ -1,6 +1,7 @@
 import { Queue, JobsOptions } from 'bullmq';
 import { redisConnection } from '../config/redis';
 import { createLogger } from '../config/logger';
+import { ApiError } from '../lib/apiError';
 
 const log = createLogger('queues');
 
@@ -80,11 +81,34 @@ export async function getAllQueueDepths(): Promise<Record<string, { waiting: num
  * each queue without duplicating the Queue-instance-caching logic here.
  */
 
+/**
+ * FIX (backend-takeover audit, Task #15): admin.routes.ts's
+ * POST /jobs/:id/retry only validated `req.body.queue` as `z.string()`,
+ * then passed it straight through to `getQueue(queueName as QueueName)`.
+ * BullMQ's `Queue` constructor does no validation of its own against any
+ * fixed set of names — any string is accepted and silently namespaces a
+ * new Redis-backed Queue object, which getQueue()'s `_queues` Map then
+ * caches forever (verified directly: `new Queue('totally-not-a-real-
+ * queue-name', ...)` constructs successfully with no error). An admin
+ * (even one just fat-fingering the queue field) could accumulate
+ * unbounded bogus Queue instances over the life of the process, and would
+ * get a confusing "Job not found" error instead of a clear "that queue
+ * doesn't exist" one. Gated here instead, against the real QueueName set.
+ *
+ * Also switched both error paths from a plain Error (which errorHandler.ts
+ * masks into a generic 500 "Something went wrong on our end" for the
+ * caller) to ApiError, matching the rest of the codebase's convention and
+ * giving this admin-only diagnostic endpoint an actually useful response
+ * instead of hiding the real cause from the admin who needs it.
+ */
 export async function retryJob(queueName: string, jobId: string): Promise<void> {
+  if (!QUEUE_NAMES.includes(queueName as QueueName)) {
+    throw ApiError.badRequest(`Unknown queue: ${queueName}`);
+  }
   const queue = getQueue(queueName as QueueName);
   const job = await queue.getJob(jobId);
   if (!job) {
-    throw new Error(`Job ${jobId} not found in queue ${queueName}`);
+    throw ApiError.notFound(`Job ${jobId} not found in queue ${queueName}.`);
   }
   await job.retry();
 }
