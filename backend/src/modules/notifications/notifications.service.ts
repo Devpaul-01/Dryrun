@@ -36,7 +36,22 @@ export async function notify(input: NotifyInput): Promise<void> {
         await sendEmail({ to: user.email, subject: input.title, html: input.emailHtml });
       }
     } else if (input.channel === 'push') {
-      await sendPush(input.userId, input.title, input.body, input.data);
+      // FIX (backend-takeover audit, Task #16 — mobile-readiness review):
+      // `type` (e.g. 'debrief_ready') is the single field a mobile client
+      // needs to decide what tapping this notification should DO (which
+      // screen to deep-link to), yet it was computed here and then
+      // silently dropped — only `input.data` (whatever entity IDs the
+      // call site happened to pass, e.g. just `{ sessionId }`) reached the
+      // actual Expo push payload's `data` field, with nothing identifying
+      // what kind of notification it was. A client would have had to
+      // guess the type from which fields happen to be present, which
+      // breaks the moment a second notification type ships with an
+      // overlapping shape. `type` is now always included in the push
+      // payload's `data`, spread first so a call site's own `data` can
+      // still override it if a future call site ever needs to (it never
+      // should, but this keeps existing call sites' exact behavior for
+      // every other field unchanged).
+      await sendPush(input.userId, input.title, input.body, { type: input.type, ...input.data });
     }
   } catch (err) {
     log.warn({ err, userId: input.userId, channel: input.channel }, 'Notification delivery failed');
