@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../config/supabase';
 import { ApiError } from '../lib/apiError';
 import { createLogger } from '../config/logger';
+import { handleOAuthLogin } from '../modules/auth/auth.service';
 
 const log = createLogger('auth-middleware');
 
@@ -99,11 +100,37 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     // row PATCH /user/me already returns via its own select('*'), so
     // widening this query is what makes the two shapes match exactly
     // going forward, including any future column added to `users`.
-    const { data: profile, error: profileError } = await supabaseAdmin()
+    let { data: profile, error: profileError } = await supabaseAdmin()
       .from('users')
       .select('*')
       .eq('id', authUser.id)
       .single();
+
+    // FIX (backend-takeover audit, Task #16 — mobile-readiness review):
+    // a mobile client doing Google OAuth gets a valid Supabase session
+    // directly from the Supabase client SDK (via expo-auth-session),
+    // entirely independent of this backend's own /auth/google/callback
+    // route — nothing requires or guarantees that callback runs, or
+    // finishes, before the client starts calling authenticated endpoints
+    // with its new token. Previously, a brand-new OAuth identity hitting
+    // ANY authenticated route before (or without ever) calling
+    // /google/callback got a confusing 404 "Account not found. Please
+    // contact support." on their very first real request — not an auth
+    // error, a dead end, for a legitimate new user. Fixed by
+    // auto-provisioning here: a valid JWT whose provider isn't 'email'
+    // (i.e. any OAuth identity, not just Google, so this doesn't need
+    // updating if another provider is added later) gets the exact same
+    // idempotent handleOAuthLogin() path /google/callback already uses,
+    // then the profile is re-read. A password-signup identity (provider
+    // === 'email') with no row is left as a genuine anomaly and still
+    // 404s — that path's row is created synchronously before any token
+    // is ever issued, so a missing row there indicates a real bug, not a
+    // legitimate ordering race, and shouldn't be silently papered over.
+    if ((profileError || !profile) && authUser.app_metadata?.provider && authUser.app_metadata.provider !== 'email') {
+      log.info({ userId: authUser.id, provider: authUser.app_metadata.provider }, 'Auto-provisioning profile for OAuth identity with no existing row');
+      await handleOAuthLogin(authUser.id, authUser.email!, (authUser.user_metadata?.full_name as string) ?? undefined);
+      ({ data: profile, error: profileError } = await supabaseAdmin().from('users').select('*').eq('id', authUser.id).single());
+    }
 
     if (profileError || !profile) {
       log.warn({ userId: authUser.id }, 'Valid JWT but no profile row found');

@@ -63,15 +63,54 @@ const log = createLogger('auth-service');
 const VERIFY_EMAIL_REDIRECT_PATH = '/verify-email';
 const RESET_PASSWORD_REDIRECT_PATH = '/reset-password';
 
+// Postgres unique_violation SQLSTATE — see the FIX comment below for why
+// this specific code gets treated as an expected outcome here.
+const POSTGRES_UNIQUE_VIOLATION = '23505';
+
 /**
  * Ensures a `public.users` profile row and a default workspace exist for a
  * given Supabase Auth identity. Called after both password signup and the
  * first-ever OAuth login for a given identity — a user should never exist
  * without a profile and a workspace, regardless of how they signed up.
+ *
+ * FIX (backend-takeover audit, Task #16 — mobile-readiness review): the
+ * check-then-insert above (`if (existing) return`) is not atomic. Two
+ * concurrent calls for the same brand-new identity — which becomes a
+ * realistic scenario once `authenticate` (below) can trigger this path on
+ * ANY request from a not-yet-provisioned user, not just the single
+ * dedicated signup/OAuth-callback call site, since a mobile client
+ * commonly fires several API calls in parallel right after login — both
+ * pass the `existing` check, both create their OWN workspace row, and
+ * only one wins the `users` insert (its id is the table's primary key).
+ * Reproduced directly against Postgres: the losing call's `users` insert
+ * correctly fails with a unique-violation, but its workspace insert had
+ * already committed, leaving a permanently orphaned, ownerless,
+ * zero-member workspace row behind — nothing ever cleans these up.
+ *
+ * Fixed two ways: (1) the `users` insert's error is now inspected
+ * explicitly — a unique-violation (23505) means a concurrent call already
+ * won and fully provisioned this identity, which is the expected,
+ * harmless outcome under a race, not a real failure, so this call cleans
+ * up the workspace IT created (which is now redundant) and returns
+ * normally instead of throwing; (2) any other insert error still throws
+ * ApiError.internal as before, since that's a genuine failure.
+ *
+ * Returns whether THIS call actually performed the provisioning (true)
+ * versus finding it already done, either before starting or by losing a
+ * concurrent race (false) — callers that follow up with a side effect
+ * that must happen exactly once per identity (handleOAuthLogin's
+ * verification email + signup-event tracking, below) gate on this return
+ * value instead of their own separate existence check, which is exactly
+ * what made the duplicate-email race possible in the first place: two
+ * concurrent handleOAuthLogin calls could both see "no row yet" on their
+ * own pre-check, both correctly end up with the row provisioned exactly
+ * once now that this function is race-safe, but — without this return
+ * value — both would still independently decide "I must be the one who
+ * needs to send the welcome email," sending it twice.
  */
-async function ensureProfileAndWorkspace(authUserId: string, email: string, displayName?: string) {
+async function ensureProfileAndWorkspace(authUserId: string, email: string, displayName?: string): Promise<boolean> {
   const { data: existing } = await supabaseAdmin().from('users').select('id').eq('id', authUserId).maybeSingle();
-  if (existing) return;
+  if (existing) return false;
 
   const { data: workspace, error: wsError } = await supabaseAdmin()
     .from('workspaces')
@@ -86,7 +125,14 @@ async function ensureProfileAndWorkspace(authUserId: string, email: string, disp
     display_name: displayName ?? null,
     current_workspace_id: workspace.id,
   });
-  if (userError) throw ApiError.internal('Failed to create user profile.');
+  if (userError) {
+    if (userError.code === POSTGRES_UNIQUE_VIOLATION) {
+      log.info({ authUserId }, 'User profile already provisioned by a concurrent call — cleaning up redundant workspace');
+      await supabaseAdmin().from('workspaces').delete().eq('id', workspace.id);
+      return false;
+    }
+    throw ApiError.internal('Failed to create user profile.');
+  }
 
   await supabaseAdmin().from('workspaces').update({ owner_user_id: authUserId }).eq('id', workspace.id);
   await supabaseAdmin().from('workspace_members').insert({
@@ -96,6 +142,7 @@ async function ensureProfileAndWorkspace(authUserId: string, email: string, disp
     status: 'active',
     joined_at: new Date().toISOString(),
   });
+  return true;
 }
 
 /**
@@ -179,6 +226,27 @@ export async function signup(email: string, password: string, displayName?: stri
  * through this app's own gate (see authenticate.ts's comment) — that
  * product decision is unchanged by this migration, only the mechanics of
  * the confirmation email itself changed.
+ *
+ * Called from two places now: the dedicated /google/callback route, and
+ * — FIX (backend-takeover audit, Task #16) — authenticate.ts's
+ * auto-provisioning path for any OAuth identity with no existing row,
+ * since nothing guarantees /google/callback runs (or finishes) before a
+ * mobile client's first authenticated request. That means this function
+ * can legitimately be called concurrently for the same brand-new
+ * identity (a mobile client firing several API calls in parallel right
+ * after login). This function's OWN pre-check (`existing` above) is not
+ * atomic and was the original source of a duplicate-verification-email
+ * bug under that race: two concurrent calls could both see "no row yet"
+ * here and both decide to send the welcome email, even once
+ * ensureProfileAndWorkspace itself was made race-safe (see that
+ * function's own comment) to guarantee the row is only ever created
+ * once. Fixed by gating the email-send and signup-event tracking on
+ * ensureProfileAndWorkspace's return value instead — it tells the truth
+ * about whether THIS call actually won the provisioning, which is the
+ * only thing that should decide whether this call is also responsible
+ * for the one-time side effects. The `existing` check above is now only
+ * a cheap short-circuit for the overwhelmingly common case (a returning
+ * user, not a race), not the source of truth.
  */
 export async function handleOAuthLogin(authUserId: string, email: string, displayName?: string) {
   const { data: existing } = await supabaseAdmin()
@@ -187,8 +255,10 @@ export async function handleOAuthLogin(authUserId: string, email: string, displa
     .eq('id', authUserId)
     .maybeSingle();
 
-  if (!existing) {
-    await ensureProfileAndWorkspace(authUserId, email, displayName);
+  if (existing) return;
+
+  const didProvision = await ensureProfileAndWorkspace(authUserId, email, displayName);
+  if (didProvision) {
     await generateAndSendVerificationEmail(email);
     await trackEvent('signup_completed', { userId: authUserId }, { provider: 'google' });
   }
