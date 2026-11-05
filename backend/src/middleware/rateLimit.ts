@@ -38,7 +38,16 @@ export function rateLimit(options: RateLimitOptions) {
       }
 
       if (count > options.max) {
-        throw ApiError.rateLimited(options.message);
+        // FIX (backend-takeover audit, Task #16): windowBucket's own
+        // boundary (the next multiple of windowSeconds, in ms since
+        // epoch) tells us exactly how long until this key's count resets
+        // — no extra Redis round-trip needed, since windowBucket was
+        // already computed above from the same formula the key itself is
+        // partitioned by. See ApiError.rateLimited's own comment for why
+        // this matters for a client's retry/backoff logic.
+        const windowEndMs = (windowBucket + 1) * options.windowSeconds * 1000;
+        const retryAfterSeconds = Math.max(1, Math.ceil((windowEndMs - Date.now()) / 1000));
+        throw ApiError.rateLimited(options.message, retryAfterSeconds);
       }
       next();
     } catch (err) {

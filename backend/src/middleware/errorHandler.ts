@@ -25,10 +25,19 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
     } else {
       log.warn({ code: err.code, requestId: req.requestId }, err.message);
     }
+    // FIX (backend-takeover audit, Task #16 — mobile-readiness review):
+    // the one place that actually sets the HTTP response, so the one
+    // place that can turn ApiError.retryAfterSeconds (middleware/
+    // rateLimit.ts) into the standard Retry-After header — see that
+    // field's own comment for the full rationale.
+    if (err.retryAfterSeconds !== undefined) {
+      res.set('Retry-After', String(err.retryAfterSeconds));
+    }
     res.status(err.status).json({
       error: err.code,
       message: err.message,
       ...(err.details ? { details: err.details } : {}),
+      ...(err.retryAfterSeconds !== undefined ? { retry_after_seconds: err.retryAfterSeconds } : {}),
     });
     return;
   }
