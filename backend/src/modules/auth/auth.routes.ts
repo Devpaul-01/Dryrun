@@ -116,8 +116,18 @@ router.post(
   })
 );
 
+// FIX (backend-takeover audit, Task #16 — mobile-readiness review): these
+// were the only two anonymous auth routes with no rate limit at all,
+// unlike /signup, /login, /refresh, /forgot-password, /resend-verification
+// and /recover-account above. Supabase's own verifyOtp is the real
+// token-verification boundary (an unguessable token still can't be brute
+// forced through unlimited retries here), but with no limit at all these
+// endpoints were otherwise open to unbounded request volume from anyone,
+// authenticated or not -- the same resource-abuse concern every other
+// anonymous route here is already guarded against.
 router.post(
   '/reset-password',
+  anonymousActionRateLimit,
   validate({ body: resetPasswordSchema }),
   asyncHandler(async (req, res) => {
     await authService.resetPassword(req.body.token, req.body.newPassword);
@@ -127,6 +137,7 @@ router.post(
 
 router.post(
   '/verify-email',
+  anonymousActionRateLimit,
   validate({ body: verifyEmailSchema }),
   asyncHandler(async (req, res) => {
     await authService.verifyEmail(req.body.token);
