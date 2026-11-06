@@ -34,6 +34,7 @@ import analyticsRoutes from './modules/analytics/analytics.routes';
 import demoRoutes from './modules/demo/demo.routes';
 import adminRoutes from './modules/admin/admin.routes';
 import healthRoutes from './modules/health/health.routes';
+import webLinksRoutes from './modules/auth/webLinks.routes';
 
 if (env.sentry.dsn) {
   Sentry.init({ dsn: env.sentry.dsn, environment: env.sentry.environment, tracesSampleRate: 0.1 });
@@ -79,6 +80,17 @@ app.use(requestLogging);
 app.use('/health', healthRoutes);
 
 // Public, unauthenticated routes.
+// FIX (backend-takeover audit, Task #16 — mobile-readiness review):
+// minimal self-served HTML pages for email verification / password
+// reset links, since no web frontend exists for env.frontendUrl to
+// point to (see webLinks.routes.ts's header comment). Mounted at the
+// root path (not under /api/v1) and before express.json() parsing
+// concerns don't apply here since this router only serves GET
+// requests -- these are the actual links users tap from their inbox,
+// so they need short, stable paths matching
+// VERIFY_EMAIL_REDIRECT_PATH / RESET_PASSWORD_REDIRECT_PATH in
+// auth.service.ts.
+app.use('/', webLinksRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/demo', demoRoutes);
 app.use('/api/v1/public', publicPlaybookRouter);
