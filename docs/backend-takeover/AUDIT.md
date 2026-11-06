@@ -812,6 +812,121 @@ race-condition fix already in place); `synthesizePersona` (the
 documented cross-member-profile-mixing and optimistic-concurrency fixes
 are both sound).
 
+## Pass 12 — Mobile-readiness review
+
+Date: 2026-11-06
+Scope: the Expo-mobile-specific gaps flagged as "not yet covered" after
+Pass 11 — auth flow for a mobile OAuth client, push notification payload
+shape, rate-limit client contract, and email deep-link / auth-redirect
+handling. Done ahead of the mobile client being built, per product
+direction, rather than discovered after.
+
+**Bug found and fixed — mobile OAuth clients had no way to get a
+provisioned profile.** A mobile client authenticates directly against
+Supabase via `expo-auth-session`, getting a valid JWT independent of this
+backend's own `POST /google/callback` route — that route only runs for
+the web OAuth-start flow (`GET /google/start`), which a mobile client
+never hits. `authenticate` middleware's own profile lookup
+(`select('*') from users`) had no fallback: a mobile user's first
+authenticated request came back a hard 404 with no profile and no
+workspace, and no second call could fix it since nothing ever ran
+`ensureProfileAndWorkspace`. Fixed by having `authenticate` auto-provision
+on first sight of a valid-but-unprovisioned JWT, gated on
+`app_metadata.provider !== 'email'` so a genuine password-identity
+anomaly (which creates its `users` row synchronously pre-token) still
+404s rather than being silently papered over.
+
+Fixing this surfaced two further concurrency bugs in the provisioning
+path itself, both verified together against real Postgres by
+orchestrating two racing calls:
+
+- **Orphaned workspace on a losing race.** `ensureProfileAndWorkspace`'s
+  original `if (existing) return; create workspace; create user` was a
+  non-atomic check-then-insert: the losing concurrent call's workspace
+  insert succeeded before its `users` insert hit a unique-violation,
+  leaving an orphaned workspace with no owner. Fixed by catching Postgres
+  unique-violation (`23505`) specifically, treating it as "someone else
+  already won" rather than an error, and having the losing call delete
+  its own redundant workspace before returning.
+- **Duplicate verification email on the same race.** `handleOAuthLogin`
+  gated `generateAndSendVerificationEmail` on its own separate `existing`
+  pre-check rather than on whether provisioning actually happened in
+  *this* call — under the same race, both calls could see `existing:
+  false` and both send a verification email. Fixed by having
+  `ensureProfileAndWorkspace` return whether this call actually performed
+  the provisioning, and gating the email (and the `signup_completed`
+  analytics event) on that return value instead.
+
+**Bug found and fixed — push payload silently dropped `type`.**
+`notifications.service.ts`'s `notify()` sent `{ data: input.data }` to
+Expo for the push channel, but never included `input.type` (e.g.
+`'workspace_invite'`, `'badge_earned'`) in that payload — only in the
+in-app/DB notification row. `expo-notifications` on the client reads the
+push payload's `data` field to decide deep-link behavior on tap; with no
+`type` discriminator in it, any client-side routing logic breaks the
+moment there's more than one notification type, which there already is.
+Fixed by merging `{ type: input.type, ...input.data }` into the actual
+push payload. Verified with a standalone before/after payload-shape
+comparison.
+
+**Bug found and fixed — 429 responses had no `Retry-After`.** A
+rate-limited client had no signal for how long to back off beyond "try
+again sometime" — a real problem for a mobile client that should
+schedule a retry rather than hammer the endpoint or leave the user
+guessing. `rateLimit.ts` already computes everything needed
+(`windowBucket`, `windowSeconds`) with no extra Redis round-trip. Added
+`ApiError.retryAfterSeconds`, computed it from the existing window-bucket
+math, and had `errorHandler.ts` — the single place the JSON error shape
+and HTTP response are constructed — set the standard `Retry-After` header
+and a `retry_after_seconds` body field whenever it's present. Verified
+end-to-end against a real Express app and a real local Redis instance: a
+2-per-5-second limiter's 3rd request returned a 429 with a matching
+`Retry-After` header and body field.
+
+**Bug found and fixed — email verification/password-reset links pointed
+nowhere.** `auth.service.ts` builds these links as
+`${FRONTEND_URL}${path}`, where `FRONTEND_URL` defaults to a Vite dev
+server and no web frontend exists anywhere in this repo — confirmed via
+a directory listing of the repo root. A user tapping "Confirm your
+email" or "Reset your password" from their inbox today hits a dead URL,
+on any platform, not just mobile. Rather than guess at a mobile
+deep-link URL scheme the Expo app doesn't register yet (and can't be
+tested until it exists), the backend now serves these two pages itself
+— minimal, dependency-free HTML at `/verify-email` and
+`/reset-password`, whose same-origin JS calls the existing
+`POST /api/v1/auth/verify-email` / `POST /api/v1/auth/reset-password`
+endpoints. No new backend logic, a thin presentation layer over what
+already exists; works for any user today regardless of platform, and is
+a one-line swap to a real frontend or mobile deep link later
+(`auth.service.ts`'s `FRONTEND_URL`/path constants). The page scripts
+are inlined as string constants in the route file rather than served as
+separate `.js` files, because `tsconfig.json` only compiles `**/*.ts`
+and this codebase has no asset-copy build step — a sibling `.js` file
+would silently 404 in production while working under `tsx` in dev with
+no build-time signal of the gap. Verified by running the real build and
+confirming the compiled route lands in `dist/` with no extra step, and
+with a standalone Express harness confirming both pages return correct
+content-types, reference their same-origin scripts, and that the
+embedded JS posts to the right API paths with body shapes matching
+`verifyEmailSchema`/`resetPasswordSchema`, including handling
+`retry_after_seconds` from the fix above.
+
+While fixing this, also found and fixed a smaller related gap: `POST
+/reset-password` and `POST /verify-email` were the only two anonymous
+auth routes with no rate limit at all, unlike every other anonymous
+route in `auth.routes.ts`. Supabase's own `verifyOtp` is the real
+token-verification boundary (an unguessable token can't be brute-forced
+through unlimited retries here), so this is a defense-in-depth /
+resource-abuse fix rather than an auth-bypass one. Added the same
+5/hour-per-IP `anonymousActionRateLimit` used by `/signup` and
+`/forgot-password`.
+
+Already reviewed and found sound earlier in this pass (not re-litigated
+here): token refresh flow and CORS configuration — native mobile clients
+send no `Origin` header and are unaffected by the browser-compatibility
+CORS allowlist; every API request is authenticated via Bearer JWT
+regardless of origin.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
 - A real test suite (vitest) for the AI output-validation pipeline and
@@ -822,7 +937,6 @@ are both sound).
 - RLS policy content in `0007_rls_policies.sql` — flagged by the repo's
   own migrations README as needing an adversarial test suite before
   launch; not written in this pass.
-- Expo mobile-app-specific backend gaps (push notification payload
-  shape, deep-link / auth-redirect handling, any mobile-specific CORS or
-  session requirements) — needs a read of the actual mobile client repo
-  or its contract expectations, which weren't provided.
+- CI (`.github/workflows`) — no automated pipeline runs typecheck,
+  lint, or tests on push/PR today; everything in this audit has been
+  verified manually, pass by pass.
