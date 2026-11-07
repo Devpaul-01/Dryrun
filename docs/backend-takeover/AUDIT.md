@@ -927,16 +927,46 @@ send no `Origin` header and are unaffected by the browser-compatibility
 CORS allowlist; every API request is authenticated via Bearer JWT
 regardless of origin.
 
+## Pass 13 — Test suite and CI
+
+Date: 2026-11-07
+Scope: the two remaining follow-up milestones from the "not yet
+covered" list below: a real regression test suite for the two areas
+with the most consequential fixes in this audit (AI validation, Pass
+4; billing reconciliation, Pass 1/3), and an automated CI pipeline to
+run it.
+
+Added `test/ai/outputValidator.test.ts` (every Zod schema in
+`outputValidator.ts` — numeric bounds, required/non-empty fields,
+markdown-fence stripping, defaults) and `test/ai/aiService.retry.test.ts`
+(the reject→retry→fallback control flow in `ai.service.ts`, with
+`callWithFallback`/`supabaseAdmin` mocked: accept-first-try,
+retry-then-succeed, retry-then-fallback, malformed-JSON vs.
+valid-but-schema-invalid-JSON as distinct failure modes, and the
+evaluation-log DB write correctly gated on a real session ID).
+
+Added `test/billing/reconcileSuccessfulPayment.test.ts`, which runs
+against a real, freshly migrated Postgres database (via
+`test/helpers/testDb.ts`, which replays every file in
+`src/db/migrations/` from empty) rather than a mock — deliberately,
+since both bugs this RPC had were schema/SQL-level failures a mocked
+database layer cannot catch. Verified the suite actually catches both
+by temporarily reintroducing each one and confirming the exact
+original failure, then restoring and re-confirming green.
+
+Added `.github/workflows/backend-ci.yml`: runs install, typecheck,
+lint, build, and test on push to `develop`/`main`/`backend-takeover/**`
+and on PRs into `develop`/`main`, using a real Postgres 16 service
+container for the billing suite. Verified every step locally against
+the exact commands and connection shape the workflow uses.
+
+Also corrected `src/db/migrations/README.md`, which still named
+migrations 0012/0013 by their pre-reshuffle filenames (from before
+`pending_tx_ref` was inserted ahead of them) and was missing 0016/0017
+entirely.
+
 ## Not yet covered (proposed as later milestones, not done in this pass)
 
-- A real test suite (vitest) for the AI output-validation pipeline and
-  billing-reconciliation RPC — both now reviewed and, where real bugs
-  were found, fixed and mechanically verified, but neither has
-  regression tests yet to keep them that way. Proposed as the next
-  milestone.
 - RLS policy content in `0007_rls_policies.sql` — flagged by the repo's
   own migrations README as needing an adversarial test suite before
-  launch; not written in this pass.
-- CI (`.github/workflows`) — no automated pipeline runs typecheck,
-  lint, or tests on push/PR today; everything in this audit has been
-  verified manually, pass by pass.
+  launch; explicitly excluded from this audit's scope throughout.
