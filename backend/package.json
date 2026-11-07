@@ -18,7 +18,8 @@
     "start:all": "node dist/start-all.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "test": "echo \"No test suite configured yet\" && exit 0"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@sentry/node": "^10.0.0",
@@ -55,9 +56,13 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.0.0",
     "@types/nodemailer": "^8.0.2",
+    "@types/pg": "8.23.1",
+    "@vitest/coverage-v8": "5.1.0",
     "eslint": "^9.0.0",
+    "pg": "8.23.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "typescript-eslint": "^8.72.1"
+    "typescript-eslint": "^8.72.1",
+    "vitest": "5.1.0"
   }
 }

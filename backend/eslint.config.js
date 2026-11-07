@@ -6,7 +6,7 @@ module.exports = tseslint.config(
     ignores: ['dist/**', 'node_modules/**', 'eslint.config.js'],
   },
   {
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.ts', 'test/**/*.ts'],
     extends: [...tseslint.configs.recommended],
     languageOptions: {
       parserOptions: {
