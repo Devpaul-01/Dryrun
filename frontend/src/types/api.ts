@@ -242,11 +242,11 @@ export interface SkillTrendPoint {
 export interface CurriculumPlan {
   id: string;
   weakness_identified: SkillAxisKey | null;
-  sessions: Array<{
+  sessions: {
     scenario_type: ScenarioType;
     difficulty_level?: DifficultyLevel;
     reason?: string;
-  }>;
+  }[];
   status: 'active' | string;
   expires_at: string | null;
 }
@@ -263,7 +263,7 @@ export interface PlaybookVersion {
   version_number: number;
   opening_message: string;
   discovery_questions: string[];
-  objection_responses: Array<{ objection: string; response: string }> | string[];
+  objection_responses: { objection: string; response: string }[] | string[];
   closing_cta: string;
   key_insight: string;
   created_at: string;
@@ -329,8 +329,8 @@ export interface NotificationItem {
 }
 
 export interface ScenarioCatalog {
-  scenario_types: Array<{ type: ScenarioType; label: string; description: string }>;
-  pressure_modifiers: Array<{ type: PressureModifier; label: string }>;
+  scenario_types: { type: ScenarioType; label: string; description: string }[];
+  pressure_modifiers: { type: PressureModifier; label: string }[];
   communication_style_presets: string[];
   conversation_channel_presets: string[];
 }
