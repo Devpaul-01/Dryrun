@@ -5,5 +5,6 @@ export { Button, type ButtonVariant } from './Button';
 export { Card } from './Card';
 export { Chip } from './Chip';
 export { EmptyState } from './EmptyState';
+export { ScreenPlaceholder } from './ScreenPlaceholder';
 export { Skeleton, type SkeletonVariant } from './Skeleton';
 export { Text } from './Text';
