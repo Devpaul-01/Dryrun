@@ -13,6 +13,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@expo-google-fonts/manrope": "^0.4.3",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.119.0",
