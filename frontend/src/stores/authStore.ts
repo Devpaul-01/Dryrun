@@ -1,12 +1,15 @@
-import * as SecureStore from 'expo-secure-store';
 import { create } from 'zustand';
 
+import { secureStorage } from '@/utils/secureStorage';
+
 /**
- * Auth tokens, persisted to expo-secure-store (not AsyncStorage — tokens
- * are sensitive, architecture doc §4.1 / §5). This is plain Zustand state
- * backed manually by SecureStore reads/writes rather than a persist
- * middleware, since SecureStore's API is async and a middleware adapter
- * would hide that.
+ * Auth tokens, persisted to expo-secure-store on native (not AsyncStorage
+ * — tokens are sensitive, architecture doc §4.1 / §5) via the
+ * secureStorage adapter, which falls back to localStorage on web, where
+ * SecureStore has no implementation. This is plain Zustand state backed
+ * manually by storage reads/writes rather than a persist middleware,
+ * since the underlying API is async and a middleware adapter would hide
+ * that.
  */
 
 const ACCESS_TOKEN_KEY = 'dryrun.auth.accessToken';
@@ -35,9 +38,9 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   hydrate: async () => {
     const [accessToken, refreshToken, expiresAt] = await Promise.all([
-      SecureStore.getItemAsync(ACCESS_TOKEN_KEY),
-      SecureStore.getItemAsync(REFRESH_TOKEN_KEY),
-      SecureStore.getItemAsync(EXPIRES_AT_KEY),
+      secureStorage.getItemAsync(ACCESS_TOKEN_KEY),
+      secureStorage.getItemAsync(REFRESH_TOKEN_KEY),
+      secureStorage.getItemAsync(EXPIRES_AT_KEY),
     ]);
 
     if (accessToken && refreshToken && expiresAt) {
@@ -49,18 +52,18 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   setTokens: async (tokens) => {
     await Promise.all([
-      SecureStore.setItemAsync(ACCESS_TOKEN_KEY, tokens.accessToken),
-      SecureStore.setItemAsync(REFRESH_TOKEN_KEY, tokens.refreshToken),
-      SecureStore.setItemAsync(EXPIRES_AT_KEY, tokens.expiresAt),
+      secureStorage.setItemAsync(ACCESS_TOKEN_KEY, tokens.accessToken),
+      secureStorage.setItemAsync(REFRESH_TOKEN_KEY, tokens.refreshToken),
+      secureStorage.setItemAsync(EXPIRES_AT_KEY, tokens.expiresAt),
     ]);
     set({ tokens });
   },
 
   clearTokens: async () => {
     await Promise.all([
-      SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
-      SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
-      SecureStore.deleteItemAsync(EXPIRES_AT_KEY),
+      secureStorage.deleteItemAsync(ACCESS_TOKEN_KEY),
+      secureStorage.deleteItemAsync(REFRESH_TOKEN_KEY),
+      secureStorage.deleteItemAsync(EXPIRES_AT_KEY),
     ]);
     set({ tokens: null });
   },
