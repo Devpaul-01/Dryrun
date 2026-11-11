@@ -49,6 +49,11 @@ export interface VerifyEmailRequest {
   token: string;
 }
 
+// Body is `z.object({}).optional()` server-side — kept as a named,
+// empty-object type (rather than inlining {}) so call sites read the
+// same way as every other auth request.
+export type ResendVerificationRequest = Record<string, never>;
+
 export interface RecoverAccountRequest {
   email: string;
   password: string;

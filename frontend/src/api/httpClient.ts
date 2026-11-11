@@ -9,7 +9,13 @@ import { env } from '@/config/env';
 import { getAuthTokens, useAuthStore } from '@/stores/authStore';
 import { getActiveWorkspaceId } from '@/stores/workspaceStore';
 import type { ApiErrorBody, FeatureGateError } from '@/types/api';
-import { ApiException, FeatureGateException, RateLimitException } from '@/types/errors';
+import {
+  AccountDeletedException,
+  ApiException,
+  EmailNotVerifiedException,
+  FeatureGateException,
+  RateLimitException,
+} from '@/types/errors';
 
 /**
  * Single Axios instance per architecture doc §4.1: base URL, auth header
@@ -108,6 +114,14 @@ httpClient.interceptors.response.use(
       // Refresh failed — tokens are already cleared by refreshAccessToken,
       // which routes the app back to (public) via the auth-gate layout.
       return Promise.reject(new ApiException(401, response.data));
+    }
+
+    if (response.status === 403 && response.data?.error === 'EMAIL_NOT_VERIFIED') {
+      return Promise.reject(new EmailNotVerifiedException(response.data));
+    }
+
+    if (response.status === 403 && response.data?.error === 'ACCOUNT_DELETED') {
+      return Promise.reject(new AccountDeletedException(response.data));
     }
 
     if (response.status === 402) {
