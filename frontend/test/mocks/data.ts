@@ -14,6 +14,7 @@ export const mockUser: User = {
   email_verified_at: '2026-01-01T00:00:00.000Z',
   onboarding_completed_at: '2026-01-01T00:05:00.000Z',
   is_admin: false,
+  deleted_at: null,
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:05:00.000Z',
 };

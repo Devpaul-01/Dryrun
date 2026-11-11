@@ -82,6 +82,8 @@ export interface User {
   email_verified_at: string | null;
   onboarding_completed_at: string | null; // legacy, workspace-level flag is authoritative
   is_admin: boolean;
+  /** Set on soft-delete (14-day recovery window); authenticate middleware 403s ACCOUNT_DELETED while set. */
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }
