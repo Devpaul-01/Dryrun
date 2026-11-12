@@ -8,6 +8,7 @@ export default function PublicLayout() {
       <Stack.Screen name="login" />
       <Stack.Screen name="signup" />
       <Stack.Screen name="forgot-password" />
+      <Stack.Screen name="check-email" />
       <Stack.Screen name="reset-password/[token]" />
       <Stack.Screen name="verify-email/[token]" />
       <Stack.Screen name="demo/start" />
