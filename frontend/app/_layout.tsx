@@ -1,6 +1,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as WebBrowser from 'expo-web-browser';
 import React, { useEffect, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -18,6 +19,11 @@ import {
 } from '@/theme/fonts';
 
 import { SplashScreenGate } from './_splashScreenGate';
+
+// Required once at module scope for the Google OAuth web flow (§hooks/useGoogleSignIn)
+// to resolve its promise correctly when the auth popup redirects back — a
+// no-op on native, per expo-web-browser's own docs.
+WebBrowser.maybeCompleteAuthSession();
 
 function RootStack() {
   const theme = useTheme();
