@@ -4,7 +4,9 @@ import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button, Card, Text, TextField } from '@/components/ui';
+import { GoogleIcon } from '@/components/ui/icons';
 import { useSignup } from '@/hooks/useAuth';
+import { useGoogleSignIn } from '@/hooks/useGoogleSignIn';
 import { useTheme } from '@/theme/ThemeProvider';
 import { isApiException } from '@/types/errors';
 import { validateEmail, validatePassword } from '@/utils/authValidation';
@@ -19,6 +21,7 @@ export default function Signup() {
   const theme = useTheme();
   const router = useRouter();
   const signup = useSignup();
+  const googleSignIn = useGoogleSignIn();
 
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -29,6 +32,7 @@ export default function Signup() {
   const passwordError = touched ? validatePassword(password) : undefined;
 
   const errorMessage = (() => {
+    if (googleSignIn.error) return googleSignIn.error.message;
     if (!signup.isError) return undefined;
     const err = signup.error;
     if (isApiException(err)) {
@@ -120,6 +124,15 @@ export default function Signup() {
           fullWidth
           loading={signup.isPending}
           onPress={handleSubmit}
+        />
+
+        <Button
+          label="Continue with Google"
+          variant="secondary"
+          fullWidth
+          icon={<GoogleIcon />}
+          loading={googleSignIn.isPending}
+          onPress={googleSignIn.signIn}
         />
 
         <Button

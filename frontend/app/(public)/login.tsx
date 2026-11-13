@@ -4,7 +4,9 @@ import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button, Card, Text, TextField } from '@/components/ui';
+import { GoogleIcon } from '@/components/ui/icons';
 import { useLogin } from '@/hooks/useAuth';
+import { useGoogleSignIn } from '@/hooks/useGoogleSignIn';
 import { useTheme } from '@/theme/ThemeProvider';
 import { isAccountDeletedException, isApiException } from '@/types/errors';
 import { validateEmail } from '@/utils/authValidation';
@@ -18,6 +20,7 @@ export default function Login() {
   const theme = useTheme();
   const router = useRouter();
   const login = useLogin();
+  const googleSignIn = useGoogleSignIn();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -27,6 +30,7 @@ export default function Login() {
   const passwordError = touched ? (password ? undefined : 'Password is required') : undefined;
 
   const errorMessage = (() => {
+    if (googleSignIn.error) return googleSignIn.error.message;
     if (!login.isError) return undefined;
     const err = login.error;
     if (isAccountDeletedException(err)) {
@@ -98,6 +102,15 @@ export default function Login() {
           fullWidth
           loading={login.isPending}
           onPress={handleSubmit}
+        />
+
+        <Button
+          label="Continue with Google"
+          variant="secondary"
+          fullWidth
+          icon={<GoogleIcon />}
+          loading={googleSignIn.isPending}
+          onPress={googleSignIn.signIn}
         />
 
         <Button
