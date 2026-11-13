@@ -14,3 +14,22 @@ process.env.EXPO_PUBLIC_API_BASE_URL ??= 'http://localhost:3001';
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
+
+// expo-secure-store has no official Jest mock, and jest-expo's own
+// auto-mock is a no-op stub (every call resolves to undefined, nothing is
+// actually stored) — confirmed by probing it directly, which is NOT safe
+// enough to test authStore's restart-persistence behavior against (see
+// test/stores/authStore.test.ts). A minimal real in-memory implementation,
+// matching the AsyncStorage mock's approach above.
+jest.mock('expo-secure-store', () => {
+  const store = new Map();
+  return {
+    getItemAsync: jest.fn(async (key) => (store.has(key) ? store.get(key) : null)),
+    setItemAsync: jest.fn(async (key, value) => {
+      store.set(key, value);
+    }),
+    deleteItemAsync: jest.fn(async (key) => {
+      store.delete(key);
+    }),
+  };
+});
