@@ -4,7 +4,7 @@
     "strict": true,
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
-    "types": ["jest"],
+    "types": ["jest", "node"],
     "paths": {
       "@/*": ["src/*"]
     }
