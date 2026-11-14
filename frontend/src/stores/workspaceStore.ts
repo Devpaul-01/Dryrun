@@ -26,14 +26,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set({ activeWorkspaceId: stored, isHydrating: false });
   },
 
+  // In-memory state updates first, persistence second: the running
+  // session (x-workspace-id header, route guards) must see the change
+  // immediately, not after a storage round-trip. A failed write only
+  // costs the next cold start a re-seed from GET /auth/me.
   setActiveWorkspaceId: async (workspaceId) => {
-    await AsyncStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, workspaceId);
     set({ activeWorkspaceId: workspaceId });
+    await AsyncStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, workspaceId);
   },
 
   clear: async () => {
-    await AsyncStorage.removeItem(ACTIVE_WORKSPACE_ID_KEY);
     set({ activeWorkspaceId: null });
+    await AsyncStorage.removeItem(ACTIVE_WORKSPACE_ID_KEY);
   },
 }));
 
