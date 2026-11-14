@@ -1,22 +1,150 @@
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { View } from 'react-native';
+import { RefreshControl, ScrollView, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Button, ScreenPlaceholder } from '@/components/ui';
+import { AsyncBoundary, Button, Card, Chip, Text } from '@/components/ui';
+import { SkillSparkline } from '@/components/coaching/SkillSparkline';
+import { useDashboard, useSkillTrend } from '@/hooks/useDashboard';
+import { useTheme } from '@/theme/ThemeProvider';
+import type { CurriculumSessionItem } from '@/types/api';
+import { axisLabel, scenarioLabel } from '@/utils/labels';
 
-/**
- * Placeholder until the dashboard lands (M2/M3). The Account button is a
- * temporary entry point so the workspace switcher and log out are
- * reachable now; it is replaced by the real header/profile entry then.
- */
-export default function Screen_Home() {
+function stepLabel(step: CurriculumSessionItem): string {
+  switch (step.type) {
+    case 'drill':
+      return `Drill: ${axisLabel(step.focus_axis)}`;
+    case 'full_scenario':
+      return `Full scenario: ${axisLabel(step.focus_axis)}`;
+    case 'spaced_repetition':
+      return `Revisit: ${scenarioLabel(step.scenario_type)}`;
+    default:
+      return 'Practice session';
+  }
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** Dashboard (architecture doc §7.3). */
+export default function Home() {
+  const theme = useTheme();
   const router = useRouter();
+  const dashboard = useDashboard();
+  const trend = useSkillTrend();
+
+  const data = dashboard.data;
+  const series = (trend.data ?? []).map((p) => p.composite_avg).reverse();
+  const latest = series.length ? Math.round(series[series.length - 1]) : null;
+  const isFirstRun = !!data && !data.last_session;
+  const steps = data?.suggested_curriculum?.sessions ?? [];
+
+  const startPractice = () => router.push('/(app)/(tabs)/practice');
+
   return (
-    <View style={{ flex: 1 }}>
-      <ScreenPlaceholder title="Home" milestone="M3 — Dashboard" />
-      <View style={{ padding: 16 }}>
-        <Button label="Account" variant="secondary" fullWidth onPress={() => router.push('/(app)/settings/account')} />
-      </View>
-    </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg.canvas }} edges={['top']}>
+      <ScrollView
+        contentContainerStyle={{ padding: theme.layout.screenPaddingPhone, gap: theme.spacing.lg, flexGrow: 1 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={dashboard.isRefetching}
+            onRefresh={() => {
+              void dashboard.refetch();
+              void trend.refetch();
+            }}
+          />
+        }
+      >
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text variant="title">Home</Text>
+          <Button label="Account" variant="secondary" onPress={() => router.push('/(app)/settings/account')} />
+        </View>
+
+        <AsyncBoundary
+          isLoading={dashboard.isPending}
+          isError={dashboard.isError}
+          error={dashboard.error}
+          onRetry={() => void dashboard.refetch()}
+          skeletonVariant="card"
+          skeletonCount={3}
+        >
+          {isFirstRun ? (
+            <Card style={{ gap: theme.spacing.md }}>
+              <Text variant="heading">Run your first practice session</Text>
+              <Text variant="body" color="secondary">
+                Practice against a realistic buyer and get scored on six skills. Your progress will show up here.
+              </Text>
+              <Button label="Start your first practice session" variant="primary" fullWidth onPress={startPractice} />
+            </Card>
+          ) : data?.last_session ? (
+            <Card style={{ gap: theme.spacing.sm }}>
+              <Text variant="caption" color="secondary">
+                Last session
+              </Text>
+              <Text variant="heading">{data.last_session.title ?? scenarioLabel(data.last_session.scenario_type)}</Text>
+              <View style={{ flexDirection: 'row', gap: theme.spacing.sm, alignItems: 'center' }}>
+                <Chip label={scenarioLabel(data.last_session.scenario_type)} />
+                <Text variant="caption" color="tertiary">
+                  {formatDate(data.last_session.completed_at)}
+                </Text>
+              </View>
+              <Button
+                label="View debrief"
+                variant="secondary"
+                onPress={() => router.push(`/(app)/session/${data.last_session!.id}/debrief`)}
+              />
+            </Card>
+          ) : null}
+
+          {series.length > 0 ? (
+            <Card style={{ gap: theme.spacing.sm }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <Text variant="caption" color="secondary">
+                  Skill trend
+                </Text>
+                {latest !== null ? <Text variant="heading">{latest}</Text> : null}
+              </View>
+              <SkillSparkline values={series} />
+            </Card>
+          ) : null}
+
+          {steps.length > 0 ? (
+            <Card style={{ gap: theme.spacing.sm }}>
+              <Text variant="caption" color="secondary">
+                Suggested next
+              </Text>
+              {data?.suggested_curriculum?.weakness_identified ? (
+                <Text variant="body" color="secondary">
+                  Focus area: {axisLabel(data.suggested_curriculum.weakness_identified)}
+                </Text>
+              ) : null}
+              {steps.map((step) => (
+                <Text key={step.session_number} variant="body">
+                  {step.session_number}. {stepLabel(step)}
+                </Text>
+              ))}
+              <Button label="Start practicing" variant="primary" onPress={startPractice} />
+            </Card>
+          ) : null}
+
+          {data?.team_progress ? (
+            <Card style={{ gap: theme.spacing.xs }}>
+              <Text variant="caption" color="secondary">
+                Team progress
+              </Text>
+              <Text variant="heading">
+                {data.team_progress.teamAverage === null ? '—' : Math.round(data.team_progress.teamAverage)} avg
+              </Text>
+              <Text variant="caption" color="tertiary">
+                {data.team_progress.memberCount} member{data.team_progress.memberCount === 1 ? '' : 's'}
+              </Text>
+            </Card>
+          ) : null}
+        </AsyncBoundary>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
