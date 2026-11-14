@@ -8,13 +8,15 @@ import { Text } from './Text';
 export interface TextFieldProps extends Omit<TextInputProps, 'style'> {
   label: string;
   error?: string;
+  /** Live character counter (shown right-aligned under the field); turns negative when over the limit. */
+  counter?: { current: number; max: number };
 }
 
 /**
- * Single-line labeled input with inline error text (architecture doc §9:
+ * Labeled text input (single- or multi-line) with inline error text and an optional live counter (architecture doc §9:
  * inline field validation before submit, mirrored across every auth form).
  */
-export function TextField({ label, error, onFocus, onBlur, ...rest }: TextFieldProps) {
+export function TextField({ label, error, counter, multiline, onFocus, onBlur, ...rest }: TextFieldProps) {
   const theme = useTheme();
   const [isFocused, setIsFocused] = useState(false);
 
@@ -42,7 +44,9 @@ export function TextField({ label, error, onFocus, onBlur, ...rest }: TextFieldP
             paddingHorizontal: theme.spacing.md,
             paddingVertical: theme.spacing.md,
           },
+          multiline ? { minHeight: 112, textAlignVertical: 'top' } : null,
         ]}
+        multiline={multiline}
         onFocus={(e) => {
           setIsFocused(true);
           onFocus?.(e);
@@ -53,10 +57,23 @@ export function TextField({ label, error, onFocus, onBlur, ...rest }: TextFieldP
         }}
         {...rest}
       />
-      {error ? (
-        <Text variant="caption" color="negative">
-          {error}
-        </Text>
+      {error || counter ? (
+        <View
+          style={{ flexDirection: 'row', justifyContent: 'space-between', gap: theme.spacing.md }}
+        >
+          <View style={{ flex: 1 }}>
+            {error ? (
+              <Text variant="caption" color="negative">
+                {error}
+              </Text>
+            ) : null}
+          </View>
+          {counter ? (
+            <Text variant="caption" color={counter.current > counter.max ? 'negative' : 'tertiary'}>
+              {counter.current}/{counter.max}
+            </Text>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
