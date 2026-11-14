@@ -8,5 +8,6 @@
 
 import { authHandlers } from './auth';
 import { catalogHandlers } from './catalog';
+import { practiceHandlers } from './practice';
 
-export const handlers = [...authHandlers, ...catalogHandlers];
+export const handlers = [...authHandlers, ...catalogHandlers, ...practiceHandlers];

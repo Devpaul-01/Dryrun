@@ -80,6 +80,34 @@ describe('useGateState', () => {
     unmount();
   });
 
+  it('routes to onboarding when this workspace has no practice profile yet', async () => {
+    meReturns({ email_verified_at: '2026-01-01T00:00:00Z', current_workspace_id: 'ws_1' });
+    server.use(
+      http.get(`${API}/onboarding/status`, () => HttpResponse.json({ onboarding_completed: false })),
+    );
+    await signIn();
+    const { result, unmount } = await renderHook(() => useGateState(), { wrapper });
+    await waitFor(() => expect(result.current.kind).toBe('onboarding'));
+    unmount();
+  });
+
+  it('asks about onboarding for the server workspace (per-workspace key)', async () => {
+    meReturns({ email_verified_at: '2026-01-01T00:00:00Z', current_workspace_id: 'ws_9' });
+    let headerSeen: string | null = null;
+    server.use(
+      http.get(`${API}/onboarding/status`, ({ request }) => {
+        headerSeen = request.headers.get('x-workspace-id');
+        return HttpResponse.json({ onboarding_completed: true });
+      }),
+    );
+    await signIn();
+    const { result, unmount } = await renderHook(() => useGateState(), { wrapper });
+    await waitFor(() => expect(result.current.kind).toBe('app'));
+    expect(headerSeen).toBe('ws_9');
+    expect(queryClient.getQueryData(['onboarding', 'ws_9'])).toEqual({ onboarding_completed: true });
+    unmount();
+  });
+
   it('shows a retryable error on a server failure instead of signing the user out', async () => {
     server.use(http.get(`${API}/auth/me`, () => HttpResponse.json({ error: 'X' }, { status: 500 })));
     await signIn();

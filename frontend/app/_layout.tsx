@@ -48,7 +48,7 @@ function RootStack() {
         <Stack.Protected guard={gate.kind === 'public' || gate.kind === 'unverified'}>
           <Stack.Screen name="(public)" />
         </Stack.Protected>
-        <Stack.Protected guard={false}>
+        <Stack.Protected guard={gate.kind === 'onboarding'}>
           <Stack.Screen name="(onboarding)" />
         </Stack.Protected>
         <Stack.Protected guard={gate.kind === 'app'}>

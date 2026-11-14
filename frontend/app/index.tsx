@@ -32,6 +32,8 @@ export default function Index() {
       return <Redirect href="/(public)/welcome" />;
     case 'unverified':
       return <Redirect href="/(public)/check-email" />;
+    case 'onboarding':
+      return <Redirect href="/(onboarding)/instant-setup" />;
     case 'app':
       return <Redirect href="/(app)/(tabs)/home" />;
   }

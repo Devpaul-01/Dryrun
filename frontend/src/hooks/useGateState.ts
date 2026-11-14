@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import { useMe } from '@/hooks/useAuth';
+import { useOnboardingStatus } from '@/hooks/useOnboarding';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { isApiException } from '@/types/errors';
@@ -11,6 +12,7 @@ export type GateState =
   | { kind: 'public' }
   | { kind: 'unverified' }
   | { kind: 'no-workspace' }
+  | { kind: 'onboarding' }
   | { kind: 'error'; retry: () => void }
   | { kind: 'app' };
 
@@ -36,6 +38,12 @@ export function useGateState(): GateState {
   const me = useMe({ enabled: !!tokens });
   const user = me.data;
   const serverWorkspaceId = user?.current_workspace_id ?? null;
+
+  // Onboarding is per workspace, and httpClient sends the store's id as
+  // x-workspace-id, so only ask once the store agrees with the server.
+  const workspaceReady =
+    !!user?.email_verified_at && !!serverWorkspaceId && activeWorkspaceId === serverWorkspaceId;
+  const onboarding = useOnboardingStatus(serverWorkspaceId, workspaceReady);
 
   // Signed out by any path (logout, failed refresh, deleted account):
   // drop everything cached for the previous session so the next login
@@ -73,5 +81,8 @@ export function useGateState(): GateState {
   if (!serverWorkspaceId) return { kind: 'no-workspace' };
   if (activeWorkspaceId !== serverWorkspaceId) return { kind: 'loading' };
 
-  return { kind: 'app' };
+  if (onboarding.isPending) return { kind: 'loading' };
+  if (onboarding.isError) return { kind: 'error', retry: () => void onboarding.refetch() };
+
+  return onboarding.data.onboarding_completed ? { kind: 'app' } : { kind: 'onboarding' };
 }
