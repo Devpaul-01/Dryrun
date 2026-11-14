@@ -241,14 +241,21 @@ export interface SkillTrendPoint {
   sessions_count: number;
 }
 
+/**
+ * One recommended step in a curriculum plan. Shape verified against
+ * backend curriculum.service.ts#recomputeCurriculum, which differs from
+ * the architecture doc's original assumption: drill/full_scenario steps
+ * name a focus_axis and no scenario_type; only spaced_repetition steps
+ * carry a scenario_type.
+ */
+export type CurriculumSessionItem =
+  | { session_number: number; type: 'drill' | 'full_scenario'; focus_axis: SkillAxisKey }
+  | { session_number: number; type: 'spaced_repetition'; scenario_type: ScenarioType };
+
 export interface CurriculumPlan {
   id: string;
   weakness_identified: SkillAxisKey | null;
-  sessions: {
-    scenario_type: ScenarioType;
-    difficulty_level?: DifficultyLevel;
-    reason?: string;
-  }[];
+  sessions: CurriculumSessionItem[];
   status: 'active' | string;
   expires_at: string | null;
 }
