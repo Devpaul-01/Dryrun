@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryClient } from '@/api/queryClient';
+import { useGateState } from '@/hooks/useGateState';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { ThemeProvider, useTheme } from '@/theme/ThemeProvider';
@@ -27,6 +28,7 @@ WebBrowser.maybeCompleteAuthSession();
 
 function RootStack() {
   const theme = useTheme();
+  const gate = useGateState();
 
   return (
     <>
@@ -36,7 +38,25 @@ function RootStack() {
           headerShown: false,
           contentStyle: { backgroundColor: theme.colors.bg.canvas },
         }}
-      />
+      >
+        {/* Route guards re-evaluate on every gate-state change, so login,
+            logout, a failed refresh, or a deleted account move the user
+            between groups from wherever they are. A guarded-out route
+            falls back to `index`, which redirects to the right place.
+            (Replaces the architecture doc's one-shot (auth-gate) group,
+            which could not react after its initial redirect.) */}
+        <Stack.Protected guard={gate.kind === 'public' || gate.kind === 'unverified'}>
+          <Stack.Screen name="(public)" />
+        </Stack.Protected>
+        <Stack.Protected guard={false}>
+          <Stack.Screen name="(onboarding)" />
+        </Stack.Protected>
+        <Stack.Protected guard={gate.kind === 'app'}>
+          <Stack.Screen name="(app)" />
+        </Stack.Protected>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="gallery" />
+      </Stack>
     </>
   );
 }
