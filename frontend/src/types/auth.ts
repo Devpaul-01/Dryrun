@@ -47,3 +47,18 @@ export interface GoogleCallbackResponse {
   success: true;
   message: string;
 }
+
+/** GET /workspaces item — verified against workspace.service.ts#listMyWorkspaces: id/name/role only, not the full Workspace row. */
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  role: import('./api').WorkspaceRole;
+}
+
+export interface ListWorkspacesResponse {
+  workspaces: WorkspaceSummary[];
+}
+
+export interface SwitchWorkspaceResponse {
+  workspace: import('./api').Workspace;
+}
