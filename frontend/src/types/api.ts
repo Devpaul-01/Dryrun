@@ -125,6 +125,13 @@ export interface Persona {
   updated_at: string;
 }
 
+/**
+ * Row shape of GET /personas — a column subset (backend persona.routes.ts).
+ * It does NOT include generation_status, so a still-generating (or failed)
+ * persona is only recognisable here by its 'Generating…' placeholder name.
+ */
+export type PersonaListItem = Pick<Persona, 'id' | 'name' | 'role' | 'source_type' | 'reusable' | 'created_at'>;
+
 // Frozen copy on a session — same shape as Persona plus seed scores.
 export interface PersonaSnapshot
   extends Omit<Persona, 'id' | 'workspace_id' | 'created_by_user_id'> {

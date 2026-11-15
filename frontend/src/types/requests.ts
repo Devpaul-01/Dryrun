@@ -107,16 +107,18 @@ export interface InstantSetupRequest {
 
 // ---------- Personas ----------
 
+/**
+ * Matches backend persona.schemas.ts createPersonaSchema exactly. The
+ * architecture doc also lists scenario_type/hidden_motivations/reusable,
+ * but the backend ignores them on manual create, so they are not sent.
+ */
 export interface CreatePersonaRequest {
-  scenario_type?: ScenarioType;
-  name: string;
-  role: string;
-  company_context?: string | null;
-  main_pain: string;
-  skepticism_about: string;
-  communication_style: string;
-  hidden_motivations?: string[];
-  reusable?: boolean;
+  name: string; // 1-120
+  role: string; // 1-120
+  company_context?: string; // <=500
+  main_pain: string; // <=1000
+  skepticism_about: string; // <=500
+  communication_style?: string; // <=200, server defaults to 'professional and direct'
 }
 
 export interface CreatePersonaFromSourceRequest {
@@ -129,16 +131,20 @@ export interface CreatePersonaFromSourceRequest {
   upload_id?: string;
 }
 
+/** Matches updatePersonaSchema: company_context, hidden_motivations and reusable are NOT patchable. */
 export interface UpdatePersonaRequest {
   name?: string;
   role?: string;
-  // company_context intentionally omitted — PATCH does not accept it
-  // server-side (architecture doc §11 item 3); not exposed as editable.
   main_pain?: string;
   skepticism_about?: string;
   communication_style?: string;
-  hidden_motivations?: string[];
-  reusable?: boolean;
+}
+
+export interface SignedUploadRequest {
+  purpose: UploadPurpose;
+  filename: string; // 1-255
+  mime_type: string;
+  size_bytes: number; // <= 10MB
 }
 
 // ---------- Sessions ----------
