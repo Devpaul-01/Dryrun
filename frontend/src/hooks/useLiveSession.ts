@@ -16,6 +16,8 @@ import {
 
 const MAX_HISTORY_PAGES = 10;
 
+export const finalLiveStateKey = (sessionId: string) => ['liveState', sessionId] as const;
+
 /** The backend exposes no endpoint for the latest live_state, so a resumed session starts from the persona's seed values. */
 export function seedLiveState(session: PracticeSession): LiveTurnState {
   return {
@@ -88,6 +90,8 @@ export function useLiveSession(session: PracticeSession | undefined) {
       try {
         const response = await sessionsApi.sendMessage(sessionId, { content }, key);
         dispatch({ type: 'reply', localId, replyLocalId: nextLocalId(), response });
+        // Kept in the query cache so the ending screen can show the final reading (§7.7: no new data fetched).
+        queryClient.setQueryData(finalLiveStateKey(sessionId), response.live_state);
         if (response.goal_achieved) finishSession(queryClient, sessionId, workspaceId);
       } catch (error) {
         if (isApiException(error) && error.status === 409) {
