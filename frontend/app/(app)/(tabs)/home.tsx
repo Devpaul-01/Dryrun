@@ -60,7 +60,10 @@ export default function Home() {
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text variant="title">Home</Text>
-          <Button label="Account" variant="secondary" onPress={() => router.push('/(app)/settings/account')} />
+          <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+            <Button label="Buyers" variant="secondary" onPress={() => router.push('/(app)/persona')} />
+            <Button label="Account" variant="secondary" onPress={() => router.push('/(app)/settings/account')} />
+          </View>
         </View>
 
         <AsyncBoundary
