@@ -44,3 +44,12 @@ const SOURCE_LABELS: Record<string, string> = {
 };
 
 export const personaSourceLabel = (type: string): string => SOURCE_LABELS[type] ?? humanize(type);
+
+const PRESSURE_LABELS: Record<string, string> = {
+  decision_maker_watching: 'Decision-maker watching',
+  competitor_mentioned: 'Competitor in play',
+  rushed_impatient: 'Rushed buyer',
+  compliance_concern: 'Compliance concerns',
+};
+
+export const pressureLabel = (key: string): string => PRESSURE_LABELS[key] ?? humanize(key);
