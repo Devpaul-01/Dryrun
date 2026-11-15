@@ -30,3 +30,17 @@ export const scenarioLabel = (type: string): string =>
 
 export const axisLabel = (axis: string): string =>
   (AXIS_LABELS as Record<string, string>)[axis] ?? humanize(axis);
+
+const SOURCE_LABELS: Record<string, string> = {
+  generated: 'Written by you',
+  linkedin_text: 'LinkedIn text',
+  company_url: 'Website',
+  sales_page: 'Sales page',
+  job_description: 'Job description',
+  email_thread: 'Email thread',
+  document: 'Document',
+  image: 'Image',
+  combined: 'Pasted text',
+};
+
+export const personaSourceLabel = (type: string): string => SOURCE_LABELS[type] ?? humanize(type);
