@@ -42,7 +42,7 @@ export default function Home() {
   const isFirstRun = !!data && !data.last_session;
   const steps = data?.suggested_curriculum?.sessions ?? [];
 
-  const startPractice = () => router.push('/(app)/(tabs)/practice');
+  const startPractice = () => router.push('/(app)/session/new');
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg.canvas }} edges={['top']}>
