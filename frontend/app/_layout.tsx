@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryClient } from '@/api/queryClient';
+import { GateLoading } from '@/components/GateScreens';
 import { useGateState } from '@/hooks/useGateState';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
@@ -29,6 +30,18 @@ WebBrowser.maybeCompleteAuthSession();
 function RootStack() {
   const theme = useTheme();
   const gate = useGateState();
+
+  // Hold the navigator back until the gate first resolves. Mounted earlier,
+  // every group is guarded out (gate is 'loading'), so a cold-start deep link
+  // (e.g. /persona/new, a notification tap) would be discarded in favour of
+  // the index route. Once resolved the navigator stays mounted for good, so
+  // later transient 'loading' states (refresh, workspace switch) don't tear
+  // down the user's navigation state.
+  const [resolved, setResolved] = useState(false);
+  useEffect(() => {
+    if (gate.kind !== 'loading') setResolved(true);
+  }, [gate.kind]);
+  if (!resolved && gate.kind === 'loading') return <GateLoading />;
 
   return (
     <>
