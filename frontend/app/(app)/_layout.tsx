@@ -1,16 +1,20 @@
 import { Stack } from 'expo-router';
 import React from 'react';
 
+import { useSessionRecovery } from '@/hooks/useSessionRecovery';
+
 /**
  * Authenticated, workspace-resolved shell (architecture doc §6). (tabs) is
  * the bottom-tab home; everything else here (session, persona, playbook,
  * workspace, billing, settings, notifications) stack-presents over it.
  */
 export default function AppLayout() {
+  useSessionRecovery();
+
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="session/[id]/new" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="session/new" options={{ presentation: 'modal' }} />
       <Stack.Screen name="session/[id]/live" />
       <Stack.Screen name="session/[id]/ending" options={{ gestureEnabled: false }} />
       <Stack.Screen name="session/[id]/debrief" />

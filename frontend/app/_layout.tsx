@@ -10,6 +10,7 @@ import { queryClient } from '@/api/queryClient';
 import { GateLoading } from '@/components/GateScreens';
 import { useGateState } from '@/hooks/useGateState';
 import { useAuthStore } from '@/stores/authStore';
+import { useLastSessionStore } from '@/stores/lastSessionStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { ThemeProvider, useTheme } from '@/theme/ThemeProvider';
 import {
@@ -84,11 +85,12 @@ export default function RootLayout() {
 
   const hydrateAuth = useAuthStore((state) => state.hydrate);
   const hydrateWorkspace = useWorkspaceStore((state) => state.hydrate);
+  const hydrateLastSession = useLastSessionStore((state) => state.hydrate);
   const [storesHydrated, setStoresHydrated] = useState(false);
 
   useEffect(() => {
-    Promise.all([hydrateAuth(), hydrateWorkspace()]).then(() => setStoresHydrated(true));
-  }, [hydrateAuth, hydrateWorkspace]);
+    Promise.all([hydrateAuth(), hydrateWorkspace(), hydrateLastSession()]).then(() => setStoresHydrated(true));
+  }, [hydrateAuth, hydrateWorkspace, hydrateLastSession]);
 
   const ready = (fontsLoaded || !!fontError) && storesHydrated;
 
