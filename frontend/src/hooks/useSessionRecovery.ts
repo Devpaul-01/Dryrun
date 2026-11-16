@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import { useEffect, useRef } from 'react';
 
 import * as sessionsApi from '@/api/sessions';
@@ -14,6 +14,8 @@ import { useLastSessionStore } from '@/stores/lastSessionStore';
  */
 export function useSessionRecovery() {
   const router = useRouter();
+  const pathname = usePathname();
+  const initialPath = useRef(pathname);
   const queryClient = useQueryClient();
   const attempted = useRef(false);
 
@@ -26,11 +28,13 @@ export function useSessionRecovery() {
       .getSession(pointer)
       .then((session) => {
         queryClient.setQueryData(sessionKey(session.id), session);
+        // Already launched directly onto this session (deep link / web reload): nothing to resume into.
+        const alreadyThere = initialPath.current.includes(`/session/${session.id}`);
         if (session.status === 'active') {
-          router.push(`/(app)/session/${session.id}/live`);
+          if (!alreadyThere) router.push(`/(app)/session/${session.id}/live`);
         } else {
           void useLastSessionStore.getState().clear();
-          if (session.status === 'completed') router.push(`/(app)/session/${session.id}/debrief`);
+          if (session.status === 'completed' && !alreadyThere) router.push(`/(app)/session/${session.id}/debrief`);
         }
       })
       .catch(() => {
