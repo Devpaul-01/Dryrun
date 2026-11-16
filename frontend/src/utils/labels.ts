@@ -53,3 +53,13 @@ const PRESSURE_LABELS: Record<string, string> = {
 };
 
 export const pressureLabel = (key: string): string => PRESSURE_LABELS[key] ?? humanize(key);
+
+/** Display order of the six scored axes. */
+export const SKILL_AXES: SkillAxisKey[] = ['clarity', 'value', 'discovery', 'objection_handling', 'brevity', 'cta_strength'];
+
+/** Signed whole-number delta for chips, e.g. "+8", "−3", "0". */
+export function formatDelta(delta: number): string {
+  const n = Math.round(delta);
+  if (n === 0) return '0';
+  return n > 0 ? `+${n}` : `−${Math.abs(n)}`;
+}
