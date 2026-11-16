@@ -364,3 +364,25 @@ export interface ApiErrorBody {
   details?: Record<string, unknown>;
   retry_after_seconds?: number;
 }
+
+/** GET /sessions/:id/export (json). The only endpoint that exposes a session's skill scores (the debrief endpoint does not). */
+export interface SessionExport {
+  session: {
+    id: string;
+    title: string | null;
+    scenario_type: ScenarioType;
+    difficulty_level: string;
+    status: SessionStatus;
+    started_at: string | null;
+    completed_at: string | null;
+  };
+  goal: SessionGoal | null;
+  skill_scores: Omit<SessionSkillScores, 'session_id'> | null;
+  debrief: Omit<SessionDebrief, 'session_id' | 'generated_at'> | null;
+  exported_at: string;
+}
+
+export interface SessionReplay {
+  messages: SessionMessage[];
+  heatmap: StateSnapshot[];
+}
