@@ -63,3 +63,13 @@ export function formatDelta(delta: number): string {
   if (n === 0) return '0';
   return n > 0 ? `+${n}` : `−${Math.abs(n)}`;
 }
+
+const GOAL_LABELS: Record<string, string> = {
+  book_meeting: 'Book a meeting',
+  yes_no_budget: 'Yes/no on budget',
+  uncover_objection: 'Uncover the objection',
+  get_reply: 'Get a reply',
+  custom: 'Custom goal',
+};
+
+export const goalLabel = (type: string): string => GOAL_LABELS[type] ?? humanize(type);
