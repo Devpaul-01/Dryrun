@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -44,7 +44,9 @@ export default function NewSession() {
   const personas = usePersonas();
   const create = useCreateSession();
 
-  const [scenario, setScenario] = useState<ScenarioType | null>(null);
+  // A curriculum recommendation can hand over a scenario to preselect.
+  const { scenario: presetScenario } = useLocalSearchParams<{ scenario?: string }>();
+  const [scenario, setScenario] = useState<ScenarioType | null>((presetScenario as ScenarioType | undefined) ?? null);
   const [personaId, setPersonaId] = useState<string | null>(null);
   const [pressure, setPressure] = useState<PressureModifier[]>([]);
   const [difficulty, setDifficulty] = useState<DifficultyLevel | null>(null);

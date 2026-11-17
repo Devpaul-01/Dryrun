@@ -4,24 +4,13 @@ import { RefreshControl, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AsyncBoundary, Button, Card, Chip, Text } from '@/components/ui';
+import { CurriculumCard } from '@/components/coaching/CurriculumCard';
 import { SkillSparkline } from '@/components/coaching/SkillSparkline';
 import { useDashboard, useSkillTrend } from '@/hooks/useDashboard';
+import { useDismissCurriculum } from '@/hooks/useProgress';
 import { useTheme } from '@/theme/ThemeProvider';
-import type { CurriculumSessionItem } from '@/types/api';
-import { axisLabel, scenarioLabel } from '@/utils/labels';
-
-function stepLabel(step: CurriculumSessionItem): string {
-  switch (step.type) {
-    case 'drill':
-      return `Drill: ${axisLabel(step.focus_axis)}`;
-    case 'full_scenario':
-      return `Full scenario: ${axisLabel(step.focus_axis)}`;
-    case 'spaced_repetition':
-      return `Revisit: ${scenarioLabel(step.scenario_type)}`;
-    default:
-      return 'Practice session';
-  }
-}
+import { suggestedScenario } from '@/utils/curriculum';
+import { scenarioLabel } from '@/utils/labels';
 
 function formatDate(iso: string | null): string {
   if (!iso) return '';
@@ -35,14 +24,17 @@ export default function Home() {
   const router = useRouter();
   const dashboard = useDashboard();
   const trend = useSkillTrend();
+  const dismiss = useDismissCurriculum();
 
   const data = dashboard.data;
   const series = (trend.data ?? []).map((p) => p.composite_avg).reverse();
   const latest = series.length ? Math.round(series[series.length - 1]) : null;
   const isFirstRun = !!data && !data.last_session;
-  const steps = data?.suggested_curriculum?.sessions ?? [];
+  const plan = data?.suggested_curriculum ?? null;
 
   const startPractice = () => router.push('/(app)/session/new');
+  const startFromPlan = (scenario: string | null) =>
+    router.push(scenario ? { pathname: '/(app)/session/new', params: { scenario } } : '/(app)/session/new');
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg.canvas }} edges={['top']}>
@@ -114,23 +106,8 @@ export default function Home() {
             </Card>
           ) : null}
 
-          {steps.length > 0 ? (
-            <Card style={{ gap: theme.spacing.sm }}>
-              <Text variant="caption" color="secondary">
-                Suggested next
-              </Text>
-              {data?.suggested_curriculum?.weakness_identified ? (
-                <Text variant="body" color="secondary">
-                  Focus area: {axisLabel(data.suggested_curriculum.weakness_identified)}
-                </Text>
-              ) : null}
-              {steps.map((step) => (
-                <Text key={step.session_number} variant="body">
-                  {step.session_number}. {stepLabel(step)}
-                </Text>
-              ))}
-              <Button label="Start practicing" variant="primary" onPress={startPractice} />
-            </Card>
+          {plan && plan.sessions.length > 0 ? (
+            <CurriculumCard plan={plan} dismissing={dismiss.isPending} onDismiss={() => dismiss.mutate(plan.id)} onStart={() => startFromPlan(suggestedScenario(plan))} />
           ) : null}
 
           {data?.team_progress ? (
