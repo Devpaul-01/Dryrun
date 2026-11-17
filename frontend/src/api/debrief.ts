@@ -36,3 +36,10 @@ export function getComparison(retrySessionId: string) {
     .get<{ comparison: SessionComparison | null }>(`/sessions/${retrySessionId}/comparison`)
     .then((res) => res.data.comparison);
 }
+
+/** Plain-text transcript export (the same data as the JSON export, formatted for sharing). */
+export function getSessionExportText(id: string) {
+  return httpClient
+    .get<string>(`/sessions/${id}/export`, { params: { format: 'text' }, responseType: 'text', transformResponse: (d) => d })
+    .then((res) => res.data);
+}
