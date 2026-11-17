@@ -1,6 +1,6 @@
 import { httpClient } from '@/api/httpClient';
-import type { CursorPage, PracticeSession, SendMessageResponse, SessionMessage } from '@/types/api';
-import type { CreateSessionRequest, SendMessageRequest } from '@/types/requests';
+import type { CursorPage, PracticeSession, SendMessageResponse, SessionListItem, SessionMessage } from '@/types/api';
+import type { CreateSessionRequest, ListSessionsRequest, SendMessageRequest } from '@/types/requests';
 
 /**
  * AI-backed calls (inline persona generation, a live turn) can outlast the
@@ -45,4 +45,34 @@ export function continueSession(id: string) {
 
 export function endSession(id: string) {
   return httpClient.post<{ already_completed: boolean }>(`/sessions/${id}/end`).then((res) => res.data);
+}
+
+export function listSessions(params: ListSessionsRequest) {
+  return httpClient
+    .get<CursorPage<SessionListItem>>('/sessions', {
+      params: {
+        ...(params.cursor ? { cursor: params.cursor } : {}),
+        ...(params.archived ? { archived: true } : {}),
+        ...(params.scenario_type ? { scenario_type: params.scenario_type } : {}),
+        ...(params.search?.trim() ? { search: params.search.trim() } : {}),
+      },
+    })
+    .then((res) => res.data);
+}
+
+export function renameSession(id: string, title: string) {
+  return httpClient.patch<{ session: PracticeSession }>(`/sessions/${id}`, { title }).then((res) => res.data.session);
+}
+
+export function archiveSession(id: string) {
+  return httpClient.post<{ success: boolean }>(`/sessions/${id}/archive`).then((res) => res.data);
+}
+
+export function unarchiveSession(id: string) {
+  return httpClient.post<{ success: boolean }>(`/sessions/${id}/unarchive`).then((res) => res.data);
+}
+
+/** 409 for completed sessions (they feed skill tracking); the UI therefore only offers this for pending/active ones. */
+export function deleteSession(id: string) {
+  return httpClient.delete<{ success: boolean }>(`/sessions/${id}`).then((res) => res.data);
 }
