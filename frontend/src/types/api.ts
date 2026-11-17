@@ -285,6 +285,19 @@ export interface PlaybookVersion {
   created_at: string;
 }
 
+/** GET /playbooks row (a column subset). `share_token` non-null means it is currently shared. */
+export interface PlaybookListItem {
+  id: string;
+  title: string;
+  created_at: string;
+  share_token: string | null;
+}
+
+/**
+ * The backend embeds the current version under `playbook_versions`; the
+ * API wrapper normalises it to `current_version` so screens never see the
+ * join shape.
+ */
 export interface Playbook {
   id: string;
   title: string;
@@ -292,7 +305,30 @@ export interface Playbook {
   share_attribution_enabled: boolean;
   current_version: PlaybookVersion;
   created_at: string;
-  updated_at: string;
+}
+
+/** GET /public/playbooks/:token — unauthenticated, no ids. */
+export interface PublicPlaybook {
+  title: string;
+  share_attribution_enabled: boolean;
+  current_version: PlaybookVersion;
+}
+
+export interface SessionListItem {
+  id: string;
+  title: string | null;
+  scenario_type: ScenarioType;
+  status: SessionStatus;
+  archived_at: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface GoalAchievementRate {
+  goal_type: GoalType;
+  /** 0-100 whole percent. */
+  rate: number;
+  total: number;
 }
 
 export interface Plan {
