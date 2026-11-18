@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { SkillBars } from '@/components/coaching/SkillBars';
 import { Badge, Button, Card, Skeleton, Text } from '@/components/ui';
 import { useDebrief, useRetrySession, useSessionResult } from '@/hooks/useDebrief';
+import { useCreatePlaybook } from '@/hooks/usePlaybooks';
 import { useSession } from '@/hooks/useSessions';
 import { useTheme } from '@/theme/ThemeProvider';
 import { isFeatureGateException, isApiException } from '@/types/errors';
@@ -32,12 +33,21 @@ export default function Debrief() {
   const debrief = useDebrief(id);
   const result = useSessionResult(id);
   const retry = useRetrySession();
+  const createPlaybook = useCreatePlaybook();
 
   const scores = result.data?.skill_scores ?? null;
   const goal = result.data?.goal ?? null;
   const retryOf = session.data?.retry_of_session_id;
   const pending = !debrief.ready || !scores;
   const timedOut = (debrief.timedOut || result.timedOut) && pending;
+
+  // Offer a playbook when the session went well (backend decides what it can generate from).
+  const canPlaybook = !!scores && (goal?.goal_achieved === true || scores.composite_score >= 70);
+  const playbookError = createPlaybook.isError
+    ? isFeatureGateException(createPlaybook.error)
+      ? createPlaybook.error.body.message
+      : 'Could not create a playbook. Please try again.'
+    : undefined;
 
   const retryError = retry.isError
     ? isFeatureGateException(retry.error)
@@ -114,6 +124,14 @@ export default function Debrief() {
           </Card>
         ) : null}
 
+        {playbookError ? (
+          <Card style={{ borderColor: theme.colors.signal.negative }}>
+            <Text variant="caption" color="negative">
+              {playbookError}
+            </Text>
+          </Card>
+        ) : null}
+
         {retryError ? (
           <Card style={{ borderColor: theme.colors.signal.negative }}>
             <Text variant="caption" color="negative">
@@ -123,6 +141,15 @@ export default function Debrief() {
         ) : null}
 
         <View style={{ gap: theme.spacing.sm }}>
+          {canPlaybook ? (
+            <Button
+              label="Turn this into a playbook"
+              variant="primary"
+              fullWidth
+              loading={createPlaybook.isPending}
+              onPress={() => createPlaybook.mutate({ session_id: id }, { onSuccess: (pb) => router.push(`/(app)/playbooks/${pb.id}`) })}
+            />
+          ) : null}
           {retryOf ? (
             <Button label="Compare with your first attempt" variant="primary" fullWidth onPress={() => router.push(`/(app)/session/${id}/comparison`)} />
           ) : null}
