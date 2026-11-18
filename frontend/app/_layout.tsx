@@ -70,6 +70,8 @@ function RootStack() {
         </Stack.Protected>
         <Stack.Screen name="index" />
         <Stack.Screen name="gallery" />
+        {/* Public shared playbook: reachable signed-in or out. */}
+        <Stack.Screen name="playbook/[token]" />
       </Stack>
     </>
   );
