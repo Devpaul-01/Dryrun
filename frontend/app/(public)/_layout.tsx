@@ -14,7 +14,6 @@ export default function PublicLayout() {
       <Stack.Screen name="demo/start" />
       <Stack.Screen name="demo/session" />
       <Stack.Screen name="demo/replay" />
-      <Stack.Screen name="playbook/[token]" />
     </Stack>
   );
 }

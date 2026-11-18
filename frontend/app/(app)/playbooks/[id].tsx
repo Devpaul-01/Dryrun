@@ -22,7 +22,7 @@ function ShareCard({ playbookId, token, attribution }: { playbookId: string; tok
   const theme = useTheme();
   const share = useSharePlaybook(playbookId);
   const revoke = useRevokePlaybookShare(playbookId);
-  const [attributionOn, setAttributionOn] = useState(attribution);
+  const [attributionOn, setAttributionOn] = useState(token ? attribution : true);
   const [copied, setCopied] = useState(false);
   const url = token ? buildPlaybookShareUrl(token, env.shareBaseUrl) : null;
 

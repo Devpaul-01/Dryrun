@@ -46,7 +46,7 @@ export default function PublicPlaybookScreen() {
             ) : null}
           </AsyncBoundary>
         )}
-        <Button label="Open DryRun" variant="secondary" fullWidth onPress={() => router.replace('/')} />
+        <Button label="Build your own in DryRun" variant="secondary" fullWidth onPress={() => router.replace('/')} />
       </ScrollView>
     </SafeAreaView>
   );
