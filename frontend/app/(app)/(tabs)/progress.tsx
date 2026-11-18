@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CurriculumCard } from '@/components/coaching/CurriculumCard';
 import { SkillSparkline } from '@/components/coaching/SkillSparkline';
-import { Card, EmptyState, Skeleton, Text } from '@/components/ui';
+import { Button, Card, EmptyState, Skeleton, Text } from '@/components/ui';
 import { useSkillTrend } from '@/hooks/useDashboard';
 import { useBadges, useCurriculum, useDismissCurriculum, useGoalRates } from '@/hooks/useProgress';
 import { useTheme } from '@/theme/ThemeProvider';
@@ -164,6 +164,7 @@ export default function Progress() {
             </View>
           )}
         </View>
+        <Button label="Your playbooks" variant="secondary" fullWidth onPress={() => router.push('/(app)/playbooks')} />
       </ScrollView>
     </SafeAreaView>
   );
