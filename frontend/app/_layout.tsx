@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryClient } from '@/api/queryClient';
 import { GateLoading } from '@/components/GateScreens';
+import { UpgradeSheet } from '@/components/UpgradeSheet';
 import { useGateState } from '@/hooks/useGateState';
 import { useAuthStore } from '@/stores/authStore';
 import { useLastSessionStore } from '@/stores/lastSessionStore';
@@ -73,6 +74,7 @@ function RootStack() {
         {/* Public shared playbook: reachable signed-in or out. */}
         <Stack.Screen name="playbook/[token]" />
       </Stack>
+      <UpgradeSheet />
     </>
   );
 }

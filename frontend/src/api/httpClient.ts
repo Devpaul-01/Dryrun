@@ -7,6 +7,7 @@ import axios, {
 
 import { env } from '@/config/env';
 import { getAuthTokens, useAuthStore } from '@/stores/authStore';
+import { useUpgradeStore } from '@/stores/upgradeStore';
 import { getActiveWorkspaceId } from '@/stores/workspaceStore';
 import type { ApiErrorBody, FeatureGateError } from '@/types/api';
 import {
@@ -125,7 +126,10 @@ httpClient.interceptors.response.use(
     }
 
     if (response.status === 402) {
-      return Promise.reject(new FeatureGateException(response.data as unknown as FeatureGateError));
+      const gate = response.data as unknown as FeatureGateError;
+      // One global upgrade sheet for every gated action (architecture doc §2.8).
+      useUpgradeStore.getState().show(gate);
+      return Promise.reject(new FeatureGateException(gate));
     }
 
     if (response.status === 429) {
