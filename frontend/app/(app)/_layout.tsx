@@ -23,8 +23,8 @@ export default function AppLayout() {
       <Stack.Screen name="persona/index" />
       <Stack.Screen name="persona/new" options={{ presentation: 'modal' }} />
       <Stack.Screen name="persona/[id]" />
-      <Stack.Screen name="playbook/index" />
-      <Stack.Screen name="playbook/[id]" />
+      <Stack.Screen name="playbooks/index" />
+      <Stack.Screen name="playbooks/[id]" />
       <Stack.Screen name="workspace/index" />
       <Stack.Screen name="workspace/settings" />
       <Stack.Screen name="billing/plans" />
