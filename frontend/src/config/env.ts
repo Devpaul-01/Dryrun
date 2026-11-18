@@ -29,6 +29,12 @@ export const env = {
   apiBaseUrl: rawApiBaseUrl.replace(/\/+$/, ''),
   /** Full versioned API root, e.g. http://localhost:3001/api/v1 (architecture doc §2). */
   apiRoot: `${rawApiBaseUrl.replace(/\/+$/, '')}/api/v1`,
+  /**
+   * Optional https origin that serves shared playbook links. The backend has
+   * no hosted playbook page (only GET /api/v1/public/playbooks/:token), so
+   * without this the share URL is the app deep link `dryrun://playbook/<token>`.
+   */
+  shareBaseUrl: readEnvVar('EXPO_PUBLIC_SHARE_BASE_URL', process.env.EXPO_PUBLIC_SHARE_BASE_URL, false).replace(/\/+$/, ''),
   supabaseUrl: readEnvVar(
     'EXPO_PUBLIC_SUPABASE_URL',
     process.env.EXPO_PUBLIC_SUPABASE_URL,
