@@ -338,6 +338,8 @@ export interface Plan {
   price_amount: number;
   currency: string;
   billing_interval: string;
+  /** Team plan: priced per seat. */
+  seat_based?: boolean;
   session_limit_per_month: number | null;
   features: Record<string, unknown>;
 }
@@ -349,6 +351,23 @@ export interface Subscription {
   current_period_end: string | null;
   canceled_at: string | null;
   plans: Plan;
+}
+
+/** GET /billing/invoices row (payment_transactions column subset). amount is in major currency units as stored by the backend. */
+export interface Invoice {
+  id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  created_at: string;
+}
+
+/** GET /billing/usage. `plan` is null on a workspace with no subscription row. */
+export interface Usage {
+  sessions_this_period: number;
+  personas_from_document_this_period: number;
+  playbooks_total: number;
+  plan: Plan | null;
 }
 
 export interface FeatureGateError {
