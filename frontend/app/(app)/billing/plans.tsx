@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Alert, Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CheckoutStatus } from '@/components/billing/CheckoutStatus';
@@ -11,17 +11,8 @@ import { useTheme } from '@/theme/ThemeProvider';
 import type { Plan } from '@/types/api';
 import { isApiException } from '@/types/errors';
 import { billingState, planAction, planFeatures } from '@/utils/billingState';
+import { confirmAsync } from '@/utils/confirm';
 import { formatMoney } from '@/utils/money';
-
-function confirmAsync(title: string, message: string): Promise<boolean> {
-  if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${message}`));
-  return new Promise((resolve) =>
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-      { text: 'Confirm', onPress: () => resolve(true) },
-    ]),
-  );
-}
 
 /** Plans & checkout (architecture doc §7.15). Buying is owner/admin; members see plans read-only. */
 export default function Plans() {
@@ -42,7 +33,7 @@ export default function Plans() {
     const action = planAction(plan, sub);
     if (action === 'checkout') return void checkout.begin(plan.key);
     if (action === 'change') {
-      const ok = await confirmAsync(`Switch to ${plan.name}?`, 'Your new plan takes effect immediately. The new price applies from your next renewal.');
+      const ok = await confirmAsync(`Switch to ${plan.name}?`, 'Your new plan takes effect immediately. The new price applies from your next renewal.', 'Switch');
       if (!ok) return;
       changePlan.mutate(plan.key, {
         onError: (e) => setChangeError(isApiException(e) ? (e.body?.message ?? 'Could not change plan.') : 'Could not change plan. Please try again.'),

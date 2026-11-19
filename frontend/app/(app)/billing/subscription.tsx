@@ -1,12 +1,13 @@
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { Alert, Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AsyncBoundary, Badge, Button, Card, Text } from '@/components/ui';
 import { useActiveRole, useCancelSubscription, useReactivateSubscription, useSubscription, useUsage } from '@/hooks/useBilling';
 import { useTheme } from '@/theme/ThemeProvider';
 import { billingState, type BillingState } from '@/utils/billingState';
+import { confirmAsync } from '@/utils/confirm';
 import { formatMoney } from '@/utils/money';
 
 const STATE_LABEL: Record<BillingState, { label: string; tone: 'neutral' | 'accent' | 'warning' | 'negative' }> = {
@@ -19,16 +20,6 @@ const STATE_LABEL: Record<BillingState, { label: string; tone: 'neutral' | 'acce
 };
 
 const fmtDate = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) : null);
-
-function confirmAsync(title: string, message: string): Promise<boolean> {
-  if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${message}`));
-  return new Promise((resolve) =>
-    Alert.alert(title, message, [
-      { text: 'Keep plan', style: 'cancel', onPress: () => resolve(false) },
-      { text: 'Cancel plan', style: 'destructive', onPress: () => resolve(true) },
-    ]),
-  );
-}
 
 function UsageRow({ label, used, limit }: { label: string; used: number; limit: number | null }) {
   const theme = useTheme();
@@ -139,7 +130,7 @@ export default function Subscription() {
                 fullWidth
                 loading={cancel.isPending}
                 onPress={async () => {
-                  const ok = await confirmAsync('Cancel your subscription?', `You keep your plan until ${fmtDate(sub.data?.current_period_end) ?? 'the end of this period'}.`);
+                  const ok = await confirmAsync('Cancel your subscription?', `You keep your plan until ${fmtDate(sub.data?.current_period_end) ?? 'the end of this period'}.`, 'Cancel plan', true);
                   if (ok) cancel.mutate();
                 }}
               />
