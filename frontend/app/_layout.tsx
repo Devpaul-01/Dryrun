@@ -73,6 +73,8 @@ function RootStack() {
         <Stack.Screen name="gallery" />
         {/* Public shared playbook: reachable signed-in or out. */}
         <Stack.Screen name="playbook/[token]" />
+        {/* Emailed workspace invite: works signed in or out. */}
+        <Stack.Screen name="invites/accept" />
       </Stack>
       <UpgradeSheet />
     </>

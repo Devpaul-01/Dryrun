@@ -1,7 +1,8 @@
-import { Stack } from 'expo-router';
-import React from 'react';
+import { Stack, useRouter } from 'expo-router';
+import React, { useEffect } from 'react';
 
 import { useSessionRecovery } from '@/hooks/useSessionRecovery';
+import { usePendingInviteStore } from '@/stores/pendingInviteStore';
 
 /**
  * Authenticated, workspace-resolved shell (architecture doc §6). (tabs) is
@@ -10,6 +11,15 @@ import { useSessionRecovery } from '@/hooks/useSessionRecovery';
  */
 export default function AppLayout() {
   useSessionRecovery();
+  const router = useRouter();
+  const { token, hydrated, hydrate } = usePendingInviteStore();
+  useEffect(() => {
+    if (!hydrated) void hydrate();
+  }, [hydrated, hydrate]);
+  // An invite opened while signed out resumes here once the user is in the app.
+  useEffect(() => {
+    if (token) router.push({ pathname: '/invites/accept', params: { token } });
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
