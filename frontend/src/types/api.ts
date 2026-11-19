@@ -358,8 +358,9 @@ export interface Subscription {
 /** GET /billing/invoices row (payment_transactions column subset). amount is in major currency units as stored by the backend. */
 export interface Invoice {
   id: string;
-  amount: number;
-  currency: string;
+  /** Nullable in payment_transactions (e.g. a pending row). */
+  amount: number | null;
+  currency: string | null;
   status: string;
   created_at: string;
 }
