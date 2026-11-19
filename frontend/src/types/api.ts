@@ -107,6 +107,23 @@ export interface WorkspaceMember {
   users: Pick<User, 'email' | 'display_name'>;
 }
 
+/** GET /workspaces/current/members row. `id` is the workspace_members id (used for remove/role); `user_id` is for ownership transfer. */
+export interface MemberListItem {
+  id: string;
+  user_id: string;
+  role: WorkspaceRole;
+  status: WorkspaceMemberStatus;
+  joined_at: string | null;
+  created_at: string;
+  users: Pick<User, 'email' | 'display_name'>;
+}
+
+export interface TeamProgress {
+  /** Mean composite across members' latest weekly summaries; null with no data. */
+  teamAverage: number | null;
+  memberCount: number;
+}
+
 export interface Persona {
   id: string;
   workspace_id: string;
