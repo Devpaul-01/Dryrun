@@ -350,6 +350,8 @@ export interface Subscription {
   current_period_start: string | null;
   current_period_end: string | null;
   canceled_at: string | null;
+  /** Provider tx reference of an unpaid checkout; non-null while status is 'incomplete'. */
+  pending_tx_ref?: string | null;
   plans: Plan;
 }
 
