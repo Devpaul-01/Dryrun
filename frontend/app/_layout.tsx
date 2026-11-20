@@ -22,11 +22,17 @@ import {
   useFonts,
 } from '@/theme/fonts';
 
+import { AppErrorBoundary } from '@/components/AppErrorBoundary';
+import { installGlobalErrorHandlers } from '@/utils/crashReporting';
 import { configureForegroundNotifications } from '@/utils/push';
 
 import { SplashScreenGate } from './_splashScreenGate';
 
 configureForegroundNotifications();
+installGlobalErrorHandlers();
+
+// Any render error in any route lands here instead of a blank screen.
+export { AppErrorBoundary as ErrorBoundary };
 
 // Required once at module scope for the Google OAuth web flow (§hooks/useGoogleSignIn)
 // to resolve its promise correctly when the auth popup redirects back — a
