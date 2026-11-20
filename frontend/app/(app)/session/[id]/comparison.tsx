@@ -7,6 +7,7 @@ import { Badge, Button, Card, Skeleton, Text } from '@/components/ui';
 import { useComparison } from '@/hooks/useDebrief';
 import { useSession } from '@/hooks/useSessions';
 import { useTheme } from '@/theme/ThemeProvider';
+import { useIsWide } from '@/utils/responsive';
 import type { SessionComparison } from '@/types/api';
 import { SKILL_AXES, axisLabel, formatDelta } from '@/utils/labels';
 
@@ -57,6 +58,7 @@ export default function Comparison() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const session = useSession(id);
+  const wide = useIsWide();
   const comparison = useComparison(id);
   const data = comparison.data;
   const notARetry = session.data && !session.data.retry_of_session_id;
@@ -76,8 +78,8 @@ export default function Comparison() {
             </Text>
           </Card>
         ) : data ? (
-          <View style={{ gap: theme.spacing.lg }}>
-            <Card style={{ gap: theme.spacing.sm }}>
+          <View style={{ gap: theme.spacing.lg, flexDirection: wide ? 'row' : 'column', alignItems: wide ? 'flex-start' : 'stretch' }}>
+            <Card style={{ gap: theme.spacing.sm, flex: wide ? 1 : undefined }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
                 <Text variant="heading">Overall</Text>
                 <Text variant="title" style={{ color: data.deltas.composite_score >= 0 ? theme.colors.signal.positive : theme.colors.signal.negative }}>
@@ -90,7 +92,7 @@ export default function Comparison() {
                 <GoalBadge label="Retry" achieved={data.retry_goal_achieved} />
               </View>
             </Card>
-            <Card style={{ gap: theme.spacing.lg }}>
+            <Card style={{ gap: theme.spacing.lg, flex: wide ? 1.4 : undefined }}>
               {SKILL_AXES.map((axis) => (
                 <AxisRow key={axis} axis={axis} data={data} />
               ))}
