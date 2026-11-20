@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as authApi from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
+import { clearStoredPushToken, getStoredPushToken } from '@/utils/push';
 import type {
   ForgotPasswordRequest,
   GoogleCallbackRequest,
@@ -65,12 +66,17 @@ export function useLogout() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (pushToken?: string) => authApi.logout(pushToken ? { pushToken } : undefined),
+    // Deregister this device's push token server-side so a signed-out phone stops receiving pushes.
+    mutationFn: async (pushToken?: string) => {
+      const token = pushToken ?? (await getStoredPushToken());
+      return authApi.logout(token ? { pushToken: token } : undefined);
+    },
     onSettled: async () => {
       // Clear local state even if the network call failed — a user who
       // tapped "log out" should end up logged out locally regardless of
       // connectivity; the server-side session simply outlives them until
       // its own expiry in that edge case.
+      await clearStoredPushToken();
       await clearTokens();
       await clearWorkspace();
       queryClient.clear();
