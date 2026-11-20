@@ -22,7 +22,11 @@ import {
   useFonts,
 } from '@/theme/fonts';
 
+import { configureForegroundNotifications } from '@/utils/push';
+
 import { SplashScreenGate } from './_splashScreenGate';
+
+configureForegroundNotifications();
 
 // Required once at module scope for the Google OAuth web flow (§hooks/useGoogleSignIn)
 // to resolve its promise correctly when the auth popup redirects back — a

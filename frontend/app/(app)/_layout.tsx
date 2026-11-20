@@ -1,6 +1,7 @@
 import { Stack, useRouter } from 'expo-router';
 import React, { useEffect } from 'react';
 
+import { usePushRegistration, usePushRouting } from '@/hooks/usePushRouting';
 import { useSessionRecovery } from '@/hooks/useSessionRecovery';
 import { usePendingInviteStore } from '@/stores/pendingInviteStore';
 
@@ -11,6 +12,8 @@ import { usePendingInviteStore } from '@/stores/pendingInviteStore';
  */
 export default function AppLayout() {
   useSessionRecovery();
+  usePushRouting();
+  usePushRegistration();
   const router = useRouter();
   const { token, hydrated, hydrate } = usePendingInviteStore();
   useEffect(() => {
