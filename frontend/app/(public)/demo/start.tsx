@@ -7,7 +7,7 @@ import type { DemoCategory } from '@/api/demo';
 import { Button, Card, Text } from '@/components/ui';
 import { useStartDemo } from '@/hooks/useDemo';
 import { useTheme } from '@/theme/ThemeProvider';
-import { isApiException } from '@/types/errors';
+import { isRateLimitException } from '@/types/errors';
 
 const CATEGORIES: { key: DemoCategory; title: string; blurb: string }[] = [
   { key: 'saas', title: 'Software / SaaS', blurb: 'Pitch a project tool to a busy operations manager.' },
@@ -21,7 +21,7 @@ export default function DemoStart() {
   const router = useRouter();
   const start = useStartDemo();
   const [category, setCategory] = useState<DemoCategory>('saas');
-  const limited = start.isError && isApiException(start.error) && start.error.status === 429;
+  const limited = start.isError && isRateLimitException(start.error);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg.canvas }}>

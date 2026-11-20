@@ -8,7 +8,7 @@ import { useDeleteAccount, useRequestDataExport } from '@/hooks/useAccount';
 import { useLogout, useMe } from '@/hooks/useAuth';
 import { useActiveRole } from '@/hooks/useBilling';
 import { useTheme } from '@/theme/ThemeProvider';
-import { isApiException } from '@/types/errors';
+import { isApiException, isRateLimitException } from '@/types/errors';
 import { confirmAsync } from '@/utils/confirm';
 
 function LinkRow({ label, hint, href }: { label: string; hint?: string; href: Href }) {
@@ -47,7 +47,7 @@ export default function Account() {
   const [exportMsg, setExportMsg] = useState<string | null>(null);
 
   const exportError = exportData.isError
-    ? isApiException(exportData.error) && exportData.error.status === 429
+    ? isRateLimitException(exportData.error)
       ? 'You requested an export recently. Please try again later.'
       : 'Could not start the export. Please try again.'
     : null;
