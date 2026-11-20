@@ -7,6 +7,7 @@ import { Button, Card, Chip, Text, TextField } from '@/components/ui';
 import { GENERATING_NAME, usePersonas, useScenarioCatalog } from '@/hooks/usePersonas';
 import { useCreateSession } from '@/hooks/useSessions';
 import { useTheme } from '@/theme/ThemeProvider';
+import { useIsWide } from '@/utils/responsive';
 import type { DifficultyLevel, GoalType, PressureModifier, ScenarioType } from '@/types/api';
 import { isApiException, isFeatureGateException } from '@/types/errors';
 import {
@@ -39,6 +40,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 /** Session setup wizard (architecture doc §7.4): scenario, buyer, pressure, difficulty, goal, then start. */
 export default function NewSession() {
   const theme = useTheme();
+  const wide = useIsWide();
   const router = useRouter();
   const catalog = useScenarioCatalog();
   const personas = usePersonas();
@@ -109,6 +111,9 @@ export default function NewSession() {
             </Card>
           ) : null}
 
+          {/* Two columns on tablets (scenario + buyer | modifiers + goal); one stacked column on phones. */}
+          <View style={{ flexDirection: wide ? 'row' : 'column', gap: theme.spacing.xl, alignItems: 'flex-start' }}>
+            <View style={{ flex: wide ? 1 : undefined, width: wide ? undefined : '100%', gap: theme.spacing.xl }}>
           <Section title="Scenario" hint={scenario ? catalog.data?.scenario_types.find((s) => s.type === scenario)?.description : 'What kind of conversation do you want to practice?'}>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm }}>
               {(catalog.data?.scenario_types ?? []).map((s) => (
@@ -131,7 +136,8 @@ export default function NewSession() {
             </View>
             <Button label="Create a new buyer" variant="ghost" onPress={() => router.push('/(app)/persona/new')} />
           </Section>
-
+            </View>
+            <View style={{ flex: wide ? 1 : undefined, width: wide ? undefined : '100%', gap: theme.spacing.xl }}>
           <Section title="Pressure" hint={`Optional. Pick up to ${MAX_PRESSURE}.`}>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm }}>
               {(catalog.data?.pressure_modifiers ?? []).map((p) => {
@@ -175,6 +181,8 @@ export default function NewSession() {
               />
             ) : null}
           </Section>
+            </View>
+          </View>
 
           <Button label="Start session" variant="primary" fullWidth onPress={start} />
         </ScrollView>
