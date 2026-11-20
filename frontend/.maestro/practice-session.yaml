@@ -1,0 +1,26 @@
+appId: com.dryrun.mobile
+name: Practice session to debrief
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Practice"
+    timeout: 20000
+- tapOn: "Practice"
+- tapOn: "New session"
+- tapOn: "Cold Open"
+- tapOn: "Start session"
+- extendedWaitUntil:
+    visible: "Type your reply…"
+    timeout: 30000
+- tapOn: "Type your reply…"
+- inputText: "Hi, thanks for taking my call. Quick question about how you handle onboarding today."
+- tapOn: "Send"
+# The buyer reply arrives; the typing indicator disappears.
+- extendedWaitUntil:
+    notVisible: ".* is replying…"
+    timeout: 45000
+- tapOn: "End"
+- tapOn: "End session"
+- extendedWaitUntil:
+    visible: "Skill scores"
+    timeout: 120000

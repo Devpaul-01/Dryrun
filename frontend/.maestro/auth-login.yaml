@@ -1,0 +1,16 @@
+appId: com.dryrun.mobile
+name: Log in and reach Home
+---
+- launchApp:
+    clearState: true
+- tapOn: "Log in"
+- tapOn: "Email"
+- inputText: ${MAESTRO_EMAIL}
+- tapOn: "Password"
+- inputText: ${MAESTRO_PASSWORD}
+- hideKeyboard
+- tapOn: "Log in"
+- extendedWaitUntil:
+    visible: "Practice"
+    timeout: 20000
+- assertVisible: "Progress"

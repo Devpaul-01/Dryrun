@@ -1,0 +1,22 @@
+appId: com.dryrun.mobile
+name: Signed-out demo to signup form
+---
+- launchApp:
+    clearState: true
+- tapOn: "Try the demo"
+- tapOn: "Services"
+- tapOn: "Start the demo"
+- extendedWaitUntil:
+    visible: "8 messages left"
+    timeout: 30000
+- tapOn: "Type your reply…"
+- inputText: "Hi, I help small businesses grow their pipeline."
+- tapOn: "Send"
+- extendedWaitUntil:
+    visible: "7 messages left"
+    timeout: 45000
+- tapOn: "End & review"
+- extendedWaitUntil:
+    visible: "Save this and keep practicing"
+    timeout: 20000
+- assertVisible: "Create account"

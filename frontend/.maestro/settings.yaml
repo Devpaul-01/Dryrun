@@ -1,0 +1,16 @@
+appId: com.dryrun.mobile
+name: Settings hub, profile and notifications
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Practice"
+    timeout: 20000
+- tapOn: "Account"
+- assertVisible: "Profile"
+- tapOn: "Profile"
+- assertVisible: "Display name"
+- back
+- tapOn: "Notifications"
+- assertVisible: "Weekly summary"
+- back
+- assertVisible: "Delete account"
