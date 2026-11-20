@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
+import { Platform } from 'react-native';
 
 import { ClockIcon, HomeIcon, TargetIcon, TrendIcon } from '@/components/ui/icons';
 import { useTheme } from '@/theme/ThemeProvider';
@@ -18,6 +19,8 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: theme.colors.bg.surface,
           borderTopColor: theme.colors.border.subtle,
+          // On web the default 49pt bar has no safe-area padding and clips the label's descenders.
+          ...(Platform.OS === 'web' ? { height: 64, paddingBottom: 8, paddingTop: 4 } : null),
         },
         tabBarLabelStyle: theme.typography.micro,
       }}
