@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { Stack } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider as NavigationThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useEffect, useState } from 'react';
@@ -56,8 +56,15 @@ function RootStack() {
   }, [gate.kind]);
   if (!resolved && gate.kind === 'loading') return <GateLoading />;
 
+  // Navigation containers paint their own background; align it with our canvas so the area
+  // beside a centred tablet column isn't the library's default light grey in dark mode.
+  const navTheme = {
+    ...(theme.scheme === 'dark' ? DarkTheme : DefaultTheme),
+    colors: { ...(theme.scheme === 'dark' ? DarkTheme : DefaultTheme).colors, background: theme.colors.bg.canvas, card: theme.colors.bg.surface },
+  };
+
   return (
-    <>
+    <NavigationThemeProvider value={navTheme}>
       <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
@@ -88,7 +95,7 @@ function RootStack() {
         <Stack.Screen name="invites/accept" options={{ contentStyle: contentColumn() }} />
       </Stack>
       <UpgradeSheet />
-    </>
+    </NavigationThemeProvider>
   );
 }
 
