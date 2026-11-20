@@ -13,7 +13,7 @@ export interface ChatBubbleProps {
 }
 
 /** Buyer bubbles sit left on an elevated surface; the user's sit right in the accent colour. A failed send flips in place to a tap-to-retry state. */
-export function ChatBubble({ item, buyerName, onRetry }: ChatBubbleProps) {
+function ChatBubbleImpl({ item, buyerName, onRetry }: ChatBubbleProps) {
   const theme = useTheme();
   const mine = item.role === 'user';
   const failed = item.status === 'failed';
@@ -59,3 +59,6 @@ export function ChatBubble({ item, buyerName, onRetry }: ChatBubbleProps) {
     </View>
   );
 }
+
+/** Memoised: the reducer keeps unchanged items referentially stable, so a long chat re-renders only the bubble that changed. */
+export const ChatBubble = React.memo(ChatBubbleImpl);
