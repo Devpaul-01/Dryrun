@@ -4,6 +4,7 @@ import React, { useEffect } from 'react';
 import { usePushRegistration, usePushRouting } from '@/hooks/usePushRouting';
 import { useSessionRecovery } from '@/hooks/useSessionRecovery';
 import { useMe } from '@/hooks/useAuth';
+import { contentColumn, WIDE_CONTENT_WIDTH } from '@/utils/responsive';
 import { usePendingInviteStore } from '@/stores/pendingInviteStore';
 import { usePendingRouteStore } from '@/stores/pendingRouteStore';
 
@@ -40,14 +41,14 @@ export default function AppLayout() {
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: contentColumn() }}>
       <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="session/new" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="session/new" options={{ presentation: 'modal', contentStyle: contentColumn(WIDE_CONTENT_WIDTH) }} />
       <Stack.Screen name="session/[id]/live" />
       <Stack.Screen name="session/[id]/ending" options={{ gestureEnabled: false }} />
       <Stack.Screen name="session/[id]/debrief" />
       <Stack.Screen name="session/[id]/replay" />
-      <Stack.Screen name="session/[id]/comparison" />
+      <Stack.Screen name="session/[id]/comparison" options={{ contentStyle: contentColumn(WIDE_CONTENT_WIDTH) }} />
       <Stack.Screen name="persona/index" />
       <Stack.Screen name="persona/new" options={{ presentation: 'modal' }} />
       <Stack.Screen name="persona/[id]" />

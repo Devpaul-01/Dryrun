@@ -39,6 +39,7 @@ export function Text({ variant = 'body', color = 'primary', style, ...rest }: Te
   })();
 
   return (
-    <RNText style={[theme.typography[variant], { color: colorValue }, style]} {...rest} />
+    // Dynamic type scales text with the OS setting; the cap keeps dense rows (chips, tab labels, meters) from breaking.
+    <RNText maxFontSizeMultiplier={1.6} style={[theme.typography[variant], { color: colorValue }, style]} {...rest} />
   );
 }

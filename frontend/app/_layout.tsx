@@ -23,6 +23,7 @@ import {
 } from '@/theme/fonts';
 
 import { AppErrorBoundary } from '@/components/AppErrorBoundary';
+import { contentColumn } from '@/utils/responsive';
 import { installGlobalErrorHandlers } from '@/utils/crashReporting';
 import { configureForegroundNotifications } from '@/utils/push';
 
@@ -82,9 +83,9 @@ function RootStack() {
         <Stack.Screen name="index" />
         <Stack.Screen name="gallery" />
         {/* Public shared playbook: reachable signed-in or out. */}
-        <Stack.Screen name="playbook/[token]" />
+        <Stack.Screen name="playbook/[token]" options={{ contentStyle: contentColumn() }} />
         {/* Emailed workspace invite: works signed in or out. */}
-        <Stack.Screen name="invites/accept" />
+        <Stack.Screen name="invites/accept" options={{ contentStyle: contentColumn() }} />
       </Stack>
       <UpgradeSheet />
     </>

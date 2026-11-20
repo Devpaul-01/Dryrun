@@ -3,6 +3,7 @@ import React from 'react';
 
 import { ClockIcon, HomeIcon, TargetIcon, TrendIcon } from '@/components/ui/icons';
 import { useTheme } from '@/theme/ThemeProvider';
+import { contentColumn } from '@/utils/responsive';
 
 export default function TabsLayout() {
   const theme = useTheme();
@@ -11,6 +12,7 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        sceneStyle: contentColumn(),
         tabBarActiveTintColor: theme.colors.accent.primary,
         tabBarInactiveTintColor: theme.colors.content.tertiary,
         tabBarStyle: {

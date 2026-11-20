@@ -1,9 +1,11 @@
 import { Stack } from 'expo-router';
 import React from 'react';
 
+import { contentColumn } from '@/utils/responsive';
+
 export default function PublicLayout() {
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: contentColumn() }}>
       <Stack.Screen name="welcome" />
       <Stack.Screen name="login" />
       <Stack.Screen name="signup" />
