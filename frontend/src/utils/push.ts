@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
+import { AndroidImportance } from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { registerPushToken } from '@/api/notifications';
@@ -27,7 +28,7 @@ export async function registerForPush(): Promise<PushResult> {
     if (status !== 'granted') ({ status } = await Notifications.requestPermissionsAsync());
     if (status !== 'granted') return { status: 'denied' };
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', { name: 'Default', importance: Notifications.AndroidImportance.DEFAULT });
+      await Notifications.setNotificationChannelAsync('default', { name: 'Default', importance: AndroidImportance.DEFAULT });
     }
     const { data: token } = await Notifications.getExpoPushTokenAsync(projectId() ? { projectId: projectId() } : undefined);
     await registerPushToken(token);

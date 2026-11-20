@@ -1,5 +1,5 @@
-jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }));
 import { objectionPairs } from '@/components/coaching/PlaybookView';
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }));
 
 describe('objectionPairs', () => {
   it('handles structured pairs and plain strings', () => {
