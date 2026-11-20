@@ -7,6 +7,7 @@ import { AsyncBoundary, Button, Card, Chip, Text } from '@/components/ui';
 import { CurriculumCard } from '@/components/coaching/CurriculumCard';
 import { SkillSparkline } from '@/components/coaching/SkillSparkline';
 import { useDashboard, useSkillTrend } from '@/hooks/useDashboard';
+import { countUnread, useNotifications } from '@/hooks/useNotifications';
 import { useDismissCurriculum } from '@/hooks/useProgress';
 import { useTheme } from '@/theme/ThemeProvider';
 import { suggestedScenario } from '@/utils/curriculum';
@@ -22,6 +23,8 @@ function formatDate(iso: string | null): string {
 export default function Home() {
   const theme = useTheme();
   const router = useRouter();
+  const notifications = useNotifications();
+  const unread = countUnread(notifications.data);
   const dashboard = useDashboard();
   const trend = useSkillTrend();
   const dismiss = useDismissCurriculum();
@@ -53,6 +56,7 @@ export default function Home() {
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text variant="title">Home</Text>
           <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+            <Button label={unread > 0 ? `Inbox (${unread > 9 ? '9+' : unread})` : 'Inbox'} variant="secondary" onPress={() => router.push('/(app)/notifications')} />
             <Button label="Buyers" variant="secondary" onPress={() => router.push('/(app)/persona')} />
             <Button label="Account" variant="secondary" onPress={() => router.push('/(app)/settings/account')} />
           </View>
