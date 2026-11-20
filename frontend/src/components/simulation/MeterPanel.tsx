@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { Text } from '@/components/ui';
 import { useTheme } from '@/theme/ThemeProvider';
@@ -12,13 +12,16 @@ const clamp = (n: number) => Math.max(0, Math.min(100, n));
 function Bar({ label, value, color, thin = false }: { label: string; value: number; color: string; thin?: boolean }) {
   const theme = useTheme();
   const progress = useSharedValue(clamp(value));
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     // Spring on every update: the moving number is the proof that a specific line landed (§8).
-    progress.value = withSpring(clamp(value), { damping: 16, stiffness: 120 });
-  }, [value, progress]);
+    // Honour the OS reduce-motion setting by jumping straight to the value.
+    progress.value = reduceMotion ? clamp(value) : withSpring(clamp(value), { damping: 16, stiffness: 120 });
+  }, [value, progress, reduceMotion]);
 
-  const fill = useAnimatedStyle(() => ({ width: `${progress.value}%` }));
+  // scaleX runs on the UI thread without a layout pass per frame (animating `width` re-lays-out every frame).
+  const fill = useAnimatedStyle(() => ({ transform: [{ scaleX: progress.value / 100 }] }));
 
   return (
     <View style={{ gap: 4 }} accessible accessibilityLabel={`${label} ${Math.round(value)} out of 100`}>
@@ -31,7 +34,7 @@ function Bar({ label, value, color, thin = false }: { label: string; value: numb
         </Text>
       </View>
       <View style={{ height: thin ? 4 : 8, borderRadius: 4, backgroundColor: theme.colors.bg.elevated, overflow: 'hidden' }}>
-        <Animated.View style={[{ height: '100%', borderRadius: 4, backgroundColor: color }, fill]} />
+        <Animated.View style={[{ height: '100%', width: '100%', borderRadius: 4, backgroundColor: color, transformOrigin: 'left center' }, fill]} />
       </View>
     </View>
   );
