@@ -252,3 +252,58 @@ Dunning is an **absolute** schedule from the first failure: `firstFailedAt` is c
 | `export_user_data` | Payload `{ userId }`. Collects the user's own data — profile, practice profiles, sessions and every child table that holds their content (messages, debriefs, scores, goals, summaries, snapshots, retries), personas and their sources, playbooks and versions, curriculum, badges, skill trend, notification preferences, push tokens, uploads — writes it as JSON to `exports/{userId}-{timestamp}.json` in Storage, and emails a signed URL valid for 7 days. Workspace-level tables (subscriptions, payments, members) are deliberately excluded because they contain other people's data. |
 | `dispatch_weekly_summaries` | Enqueues one `send_weekly_summary` job per active `workspace_members` row whose user is not soft-deleted, so each send retries independently and the scheduled job stays cheap. |
 | `check_renewals_due` | Runs two disjoint queries. **Due renewals** (`status = 'active'`, `canceled_at` null, `current_period_end` in the past) are dispatched to `attempt_renewal_charge` with `idempotencyKey = renewal-dispatch:{subscriptionId}:{current_period_end}`. **Cancelled and expired** subscriptions (`canceled_at` set, period over) are finalised to `canceled` with an audit entry and no charge. Query errors are logged as `ALERT` and rethrown. |
+
+---
+
+## 5. Scheduler
+
+### 5.1 Registered schedules
+
+All seven live in `SCHEDULES` in `jobs/scheduler.ts` and all are registered on the `maintenance` queue. The job name doubles as the scheduler ID.
+
+| Job | Cron | When | Meaning |
+|---|---|---|---|
+| `purge_expired_demo_sessions` | `0 * * * *` | Hourly, :00 | Delete expired signed-out demo sessions |
+| `purge_orphaned_uploads` | `30 * * * *` | Hourly, :30 | Delete uploads that were never confirmed |
+| `check_renewals_due` | `0 2 * * *` | Daily 02:00 | Dispatch renewal charges; finalise cancelled subscriptions |
+| `purge_soft_deleted_accounts` | `0 3 * * *` | Daily 03:00 | Hard-delete accounts past the 14-day grace window |
+| `archive_old_session_state_snapshots` | `0 4 * * 0` | Sunday 04:00 | Prune per-turn snapshots older than 180 days |
+| `sample_ai_scoring_evaluations_for_review` | `0 5 * * 1` | Monday 05:00 | Draw the weekly human-review sample |
+| `dispatch_weekly_summaries` | `0 18 * * 0` | Sunday 18:00 | Fan out one summary email job per active member |
+
+No `tz` is set on any schedule, so the patterns are evaluated in the worker process's timezone — UTC in most containers. Set `TZ` explicitly if the times matter.
+
+### 5.2 Registration
+
+`registerSchedules()` runs inside `startAllWorkers()`, so every worker process and every combined-mode process calls it on boot. For each entry it calls BullMQ's `queue.upsertJobScheduler(jobName, { pattern: cron }, { name: jobName, data })`.
+
+That call is one atomic server-side operation ("create this scheduler, or update it in place if the ID exists"), so any number of replicas can boot at once without racing. It replaced BullMQ's deprecated repeatable-jobs API (`getRepeatableJobs` → `removeRepeatableByKey` → `add`), whose non-atomic read-delete-add sequence had needed a hand-rolled Redis lock around it. The lock was removed outright because the problem it solved no longer exists.
+
+Two consequences to be aware of:
+
+- The schedule lives in Redis, not in a running process. When a cron fires, BullMQ creates the job on `maintenance` and any worker consuming that queue picks it up.
+- Registration only ever *upserts*. Deleting an entry from `SCHEDULES` does not remove its scheduler from Redis; remove it explicitly (§9).
+
+The scheduler passes no job `opts`, so scheduled jobs do not get the per-queue retry and retention defaults from §3.2. This matters for reliability — see §7.1 and §10.
+
+---
+
+## 6. Redis Usage
+
+One shared `ioredis` connection (`config/redis.ts`, created lazily, `maxRetriesPerRequest: null` as BullMQ requires) backs seven distinct concerns. Nothing in the backend talks to Redis outside these.
+
+| # | Concern | Where | Keys and mechanism |
+|---|---|---|---|
+| 1 | **Queues and scheduler** | `jobs/*` | BullMQ's own key space. |
+| 2 | **Rate limiting** | `middleware/rateLimit.ts` | `ratelimit:{baseUrl}{path}:{identity}:{windowBucket}`, `INCR` then `EXPIRE` on the first hit. Fixed window, counted **per route**, keyed by user ID or IP. Eight tiers — see ARCHITECTURE.md §11. |
+| 3 | **Caches** | `config/cache.ts`, `middleware/resolveWorkspace.ts`, `config/systemConfig.ts` | Read-through cache with direct-key and tag-set invalidation (tag sets expire after 24 h as a backstop); workspace context cached 30 s; `system_config` values cached 30 s. |
+| 4 | **AI provider cooldown** | `modules/ai/fallbackChain.ts` | `ai-provider-cooldown:{provider}`, set for 1 hour when a provider fails with a retryable error. |
+| 5 | **AI budget** | `modules/ai/fallbackChain.ts`, `config/redis.ts` | `ai-budget:{workspaceId}:{day}`, reserved by the `checkAndReserveBudget` **Lua script** so read, compare and increment are one atomic step. |
+| 6 | **Request idempotency** | `lib/idempotency.ts`, `config/redis.ts` | `idempotency:{scope}:{key}`. The `claimIdempotencyKey` Lua script atomically claims the key for 30 s; the winner runs the work and caches its result for 24 h, while a losing caller polls for that result instead of running the work again. A failed attempt clears its own claim at once. |
+| 7 | **Locks and counters** | `attemptRenewalCharge.worker.ts`, `purgeSoftDeletedAccounts.worker.ts`, `modules/demo/demo.service.ts` | `renewal-lock:{subscriptionId}` (`SET NX PX 30000`); `purge-soft-deleted-accounts-lock` (`SET NX PX 300000`, refreshed after each candidate); `demo-abuse:{sha256(ip)}` (`INCR`, 24 h) allowing one demo per IP per day. |
+
+**Why two of these are Lua scripts and the rest are not.** A single `INCR` or `SET NX` is already atomic. The AI budget and the idempotency claim were different: they did a plain read followed by a *conditional* write based on what was read, so two concurrent callers — on one instance or on two — could both pass the check. Moving the read, compare and write into one script closes that.
+
+**Failure behaviour is not uniform, and mostly fails closed.** Only the shared read-through helper `cached()` in `config/cache.ts` catches Redis errors and falls through to Postgres. The workspace-context lookup (`resolveWorkspace`), `system_config` reads (`getConfig`) and the rate limiter have no such fallback: a Redis error is forwarded to the error handler, so while Redis is unreachable every authenticated route (which runs `resolveWorkspace` and `defaultRateLimit`) returns a 5xx. Enqueueing a job needs Redis too. Treat Redis as a hard dependency of the API, not an optional accelerator.
+
+**What Redis is not used for:** pub/sub (Realtime goes through Supabase), Streams, Redlock, or any dead-letter store beyond BullMQ's own failed-job sets.
