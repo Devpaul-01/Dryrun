@@ -143,13 +143,27 @@ npm run start:worker # node dist/jobs/index.js
 npm run start:all    # node dist/start-all.js
 ```
 
+## Testing and CI
+
+| Suite | Command | What it covers |
+|---|---|---|
+| Backend — AI pipeline | `cd backend && npm test` | Every Zod schema in `modules/ai/outputValidator.ts` and the reject → retry → neutral-fallback control flow in `ai.service.ts`, with the provider call and Supabase mocked. No services needed. |
+| Backend — billing reconciliation | `cd backend && npm test` | The `reconcile_successful_payment` RPC against a **real Postgres**, created and migrated from empty per run (needs `TEST_DATABASE_URL`; see [`backend/test/README.md`](./backend/test/README.md)). |
+| Frontend | `cd frontend && npm test` | Jest (25 suites, 87 tests at the time of writing): the HTTP client's 401 refresh and 402 upgrade-gate handling, query-error mapping, stores, hooks and utilities, against MSW mocks. |
+| Frontend — device smoke | `maestro test .maestro` | Login, a practice session through to the debrief, the demo funnel and settings; needs a device build and a seeded backend ([`frontend/.maestro/README.md`](./frontend/.maestro/README.md)). |
+
+CI (`.github/workflows/`) runs typecheck, lint, build and tests for the backend — including a Postgres 16 service container for the billing suite — and typecheck, lint and Jest for the frontend. Maestro is manual.
+
 ## Current gaps, stated plainly
 
-- **No automated test suite yet** — `npm test` is a placeholder. This is the most honest gap in the current backend.
-- **Mobile client doesn't exist yet.** The API contract is stable and this backend has been exercised through it during development, but there's no UI to point at yet.
+- **Backend test coverage is deliberately narrow.** The two suites above guard the places a silent regression would cost the most. There are no route-level or integration tests, and none of the 21 job handlers, the webhook route, the idempotency primitive or the cache layer has automated coverage yet.
+- **Webhook events are not re-driven.** `POST /billing/webhooks/flutterwave` persists the event, answers `200`, and only then enqueues `process_webhook_event`. If that enqueue fails, the row stays `processed = false` and nothing sweeps for it. Details and mitigation in [`docs/BACKGROUND_JOBS.md`](./docs/BACKGROUND_JOBS.md#10-known-limitations).
+- **No Dockerfile.** The three entry points run directly under Node.
 - **RLS is enabled everywhere but isn't the enforcement boundary** — the service-role client bypasses it by design; workspace-scoping in application code is the real authorization check today, with RLS as a documented, deliberate last line of defense.
+- **No license is declared.** `package.json` says `UNLICENSED`, so all rights are reserved by default.
 
 ## What's next
 
-- Building out the Expo client against this API.
-- Test coverage, starting with the AI-output-validation pipeline and the billing-reconciliation RPC paths — the two places a silent regression would be most expensive.
+- Handler-level tests for the job queue, starting with the renewal-dunning chain and the webhook processor.
+- A sweep that re-enqueues unprocessed `webhook_events` rows.
+- A Dockerfile per entry point for real deployment.
