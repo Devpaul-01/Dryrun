@@ -2,7 +2,7 @@
 
 **A sales-practice simulator: describe what you sell, practice the hard conversation against an AI buyer built for your product, get an honest read on what's actually working.**
 
-**Status:** API and background-worker backend complete. Mobile client (Expo/React Native) in active development against this API.
+**Status:** API and background-worker backend implemented, with a test suite and CI. The Expo / React Native mobile client is built against it and covers the whole practice loop — auth, the live session, debrief, replay and retry comparison, progress, playbooks, billing, team management, notifications and a signed-out demo.
 
 ---
 
@@ -12,7 +12,7 @@ You're a founder or a new sales hire and you're about to do outbound for the fir
 
 A session runs in real time: the buyer's reply, their private internal monologue (revealed after the session), and a live interest/trust reading all update every turn from one structured AI call. When it ends, you get a six-axis skill score, a specific coaching debrief, and — if you retry the same scenario — an exact numeric comparison against your first attempt.
 
-The full backend for this — API, five background-job queues, AI provider fallback, billing, real-time status channels — is built and working. The mobile client is what I'm building next.
+The backend — API, five background-job queues, AI provider fallback, billing, real-time status channels — and the mobile client that drives it live in one repository: `backend/` and `frontend/`.
 
 ## The problem
 
@@ -31,7 +31,7 @@ Sales pitches fail in a specific, nameable way, and you usually only find out li
 ## Architecture, briefly
 
 ```
-Mobile Client (Expo — in progress)
+Mobile Client (Expo / React Native)
         │  HTTPS / JSON, Bearer JWT
         ▼
    Express API  ──┬──►  Supabase Postgres  (system of record)
@@ -73,7 +73,7 @@ Product workflows and the reasoning behind them: **[PRODUCT_OVERVIEW.md](./PRODU
 | Push / email | Expo Server SDK, Resend / SMTP / console (env-selected) |
 | Analytics | PostHog + a parallel Postgres `analytics_events` table |
 | Logging / errors | Pino (structured JSON), Sentry |
-| Mobile client (in progress) | Expo / React Native |
+| Mobile client | Expo / React Native, expo-router, TanStack Query, Zustand — see [`frontend/README.md`](./frontend/README.md) |
 
 ## Repository structure
 
