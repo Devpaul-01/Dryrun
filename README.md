@@ -104,6 +104,8 @@ start-all.ts  Combined API + worker entry point
 
 ## Setup
 
+Backend (from `backend/`):
+
 ```bash
 npm install
 cp .env.example .env   # see required variables below
@@ -112,16 +114,25 @@ npm run dev:worker      # workers only
 npm run dev:all         # both, one process
 ```
 
+Mobile client (from `frontend/`, with the backend running):
+
+```bash
+npm install
+cp .env.example .env   # set EXPO_PUBLIC_API_BASE_URL and the Supabase values
+npm start
+```
+
+The database schema, Supabase Auth hook setup and the ClamAV dependency are covered in [`backend/README.md`](./backend/README.md).
+
 ### Required environment variables
 
 ```
 SUPABASE_URL
 SUPABASE_SERVICE_ROLE_KEY
 REDIS_URL
-FRONTEND_URL
 ```
 
-Everything else (AI provider keys, Flutterwave keys, email provider, PostHog, Sentry, ClamAV host) is optional and feature-gates gracefully — the app boots without them, with the corresponding feature disabled or, for AI providers specifically, a smaller effective fallback chain. See `config/env.ts` for the complete list and defaults.
+These three are read lazily by `config/env.ts` — a missing one throws on the first Supabase or Redis call rather than at process start, so check `GET /health/ready` after booting. Everything else (AI provider keys, Flutterwave keys, email provider, PostHog, Sentry, ClamAV host, `FRONTEND_URL`) is optional and feature-gates gracefully: the app boots without them, with the corresponding feature disabled or, for AI providers specifically, a smaller effective fallback chain. The complete list, with defaults, is in [`docs/CONFIGURATION.md`](./docs/CONFIGURATION.md).
 
 ### Build & run
 
