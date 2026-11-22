@@ -363,7 +363,7 @@ Flutterwave is the only implemented payment provider, but application code never
 
 ## 11. Rate Limiting
 
-A single Redis-backed fixed-window counter (`lib/rateLimit.ts`) is intentionally simpler than a sliding-window or token-bucket implementation — the actual abuse pattern this product needs to defend against is bursts from a single client, not a sophisticated distributed attack, so the added precision wouldn't buy anything. Seven distinct tiers are keyed by intent, not one blanket limit:
+A single Redis-backed fixed-window counter (`middleware/rateLimit.ts`) is intentionally simpler than a sliding-window or token-bucket implementation — the actual abuse pattern this product needs to defend against is bursts from a single client, not a sophisticated distributed attack, so the added precision wouldn't buy anything. Eight distinct tiers are keyed by intent, not one blanket limit. Counters are kept **per route** (the Redis key includes the mounted path), so a limit applies to each endpoint separately rather than to a user's total traffic:
 
 | Tier | Window | Limit | Keyed by |
 |---|---|---|---|
@@ -374,6 +374,7 @@ A single Redis-backed fixed-window counter (`lib/rateLimit.ts`) is intentionally
 | Upload provisioning | 60s | 20 | User or IP |
 | Admin writes | 5 min | 20 | User or IP |
 | Full account export | 1hr | 3 | User |
+| Default (everything else authenticated) | 60s | 120 | User or IP |
 
 Admin **write** actions are rate-limited; admin **read** endpoints (job depths, audit log, AI-scoring sample) deliberately are not, since a legitimate ops dashboard polling those is a different traffic shape than a rare, deliberate config change or job retry.
 
