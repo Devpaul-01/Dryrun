@@ -307,3 +307,99 @@ One shared `ioredis` connection (`config/redis.ts`, created lazily, `maxRetriesP
 **Failure behaviour is not uniform, and mostly fails closed.** Only the shared read-through helper `cached()` in `config/cache.ts` catches Redis errors and falls through to Postgres. The workspace-context lookup (`resolveWorkspace`), `system_config` reads (`getConfig`) and the rate limiter have no such fallback: a Redis error is forwarded to the error handler, so while Redis is unreachable every authenticated route (which runs `resolveWorkspace` and `defaultRateLimit`) returns a 5xx. Enqueueing a job needs Redis too. Treat Redis as a hard dependency of the API, not an optional accelerator.
 
 **What Redis is not used for:** pub/sub (Realtime goes through Supabase), Streams, Redlock, or any dead-letter store beyond BullMQ's own failed-job sets.
+
+---
+
+## 7. Reliability
+
+### 7.1 What actually gets retried
+
+The per-queue retry settings in §3.2 are applied by `enqueue()`. Three things reduce how much of that applies in practice:
+
+- **Scheduled jobs get none of it.** The scheduler passes no job options (§5.2), so the seven cron-fired jobs run with BullMQ's defaults for an option-less job: a single attempt, and completed and failed job records are not automatically removed. A failure in `check_renewals_due` is therefore retried by the next day's run, not by BullMQ.
+- **Several handlers catch their own failures.** `extract_persona_source` and `synthesize_persona` mark the persona or source as failed, publish a status and return; the AV scanner marks the upload failed and returns. Because they do not throw, the `persona-ingestion` queue's three attempts never apply to them — the failure is *terminal* and is surfaced to the user as a status instead. This is deliberate for user-visible pipelines (a retry would only delay the failure message) but means the queue-level retry count is not the whole story.
+- **Handlers that rethrow** — `process_webhook_event` when the reconcile RPC fails, `purge_soft_deleted_accounts` and `check_renewals_due` on query errors, `attempt_renewal_charge` on a reconcile error — do get BullMQ retries when they were enqueued through `enqueue()`.
+
+### 7.2 Duplicate prevention
+
+| Problem | Mechanism |
+|---|---|
+| Two renewal dispatches for the same subscription and billing period | Job ID `renewal-dispatch:{subscriptionId}:{current_period_end}` from `enqueue({ idempotencyKey })`. BullMQ ignores an `add()` whose ID exists. Once a renewal succeeds, `current_period_end` advances, so the next period gets a new ID. |
+| A scheduled run and a manual admin retry charging at once | `renewal-lock:{subscriptionId}` (30 s). |
+| A webhook delivered twice | `webhook_events.provider_event_id` unique constraint (`23505` is answered `200`); `processed` flag checked again in the worker; atomic `reconcile_successful_payment` RPC. |
+| Re-running a scoring, debrief or comparison job | Upserts keyed on `session_id` / `retry_session_id`. |
+| Concurrent summarisation | Delete-then-insert with `23505` treated as success. |
+| Overwriting a user's edit with a stale persona synthesis | Conditional update on `updated_at` (§4.2). |
+| Two replicas running the account purge | `purge-soft-deleted-accounts-lock` with a refreshed TTL. |
+| A client retrying `POST /sessions/:id/messages` or playbook generation | Request-level idempotency via the `Idempotency-Key` header (`lib/idempotency.ts`, Redis Lua claim) — this protects the HTTP request, not the job. |
+| Two replicas registering the same cron schedule | `upsertJobScheduler` (§5.2). |
+
+Only `attempt_renewal_charge` dispatch uses a deterministic job ID today. Everything else enqueued from the API gets a random BullMQ ID, so an API-level retry that reaches `enqueue()` twice would enqueue twice and rely on the handler being re-runnable.
+
+### 7.3 Failure recovery
+
+There is **no dead-letter queue and no automated re-drive**. A job that exhausts its attempts stays in its queue's failed set (capped by `removeOnFail`, §3.2) where an admin can see and retry it (§8). What recovers on its own:
+
+| Failure | Recovery |
+|---|---|
+| A cron-fired job fails | The next scheduled run. All seven are written to be safe to run again. |
+| A renewal charge is declined | The dunning chain: attempts on day 0, 1, 4 and 8, then cancellation. |
+| A conversation summary fails | The next 30-message boundary produces a newer one. |
+| An AI provider fails | Not a job concern: the provider fallback chain in `modules/ai/fallbackChain.ts` tries the next provider, with a 1-hour cooldown on the failing one. |
+| Webhook persistence fails | The route answers `500`, so Flutterwave redelivers. (Processing failures *after* a successful insert are different — see §10.) |
+
+### 7.4 Crash recovery and shutdown
+
+If a worker dies mid-job, BullMQ's lock on the job lapses and the job is reclaimed as stalled and run again by a live worker. Handlers must therefore tolerate a second run, and the table in §4 says which do. The three that do not — `export_user_data`, `send_weekly_summary`, `send_payment_failed_email` — could send a duplicate email after a crash; `attempt_renewal_charge` is a more serious case and is covered in §10.
+
+On `SIGTERM`/`SIGINT` the worker calls `close()` on every `Worker`, which stops taking new jobs and waits for in-flight ones. There is no forced-exit timer, so a handler that never returns holds the process open until the orchestrator sends `SIGKILL`.
+
+No worker sets `lockDuration` or a per-job timeout, so BullMQ's defaults apply. External calls rely on the HTTP client's and provider's own timeouts.
+
+---
+
+## 8. Operating and Monitoring
+
+### 8.1 Running
+
+```bash
+# Production, split tiers (after `npm run build`)
+npm start                # API only          -> node dist/server.js
+npm run start:worker     # workers + schedules -> node dist/jobs/index.js
+npm run start:all        # both in one process -> node dist/start-all.js
+
+# Development (tsx watch)
+npm run dev              # API only
+npm run dev:worker       # workers only
+npm run dev:all          # both
+```
+
+Run as many `start:worker` processes as needed against the same `REDIS_URL`; BullMQ hands each job to exactly one. Concurrency in §3.2 is per process. Every worker process re-registers the schedules on boot, which is safe (§5.2). Do not use `start:all` if API and worker capacity need to scale independently.
+
+### 8.2 Admin endpoints
+
+Mounted at `/api/v1/admin`; every route requires an authenticated user with the `is_admin` flag, plus the optional `ADMIN_ALLOWLIST_IPS` check (see [CONFIGURATION.md](./CONFIGURATION.md)).
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /jobs` | Per-queue counts of `waiting`, `active`, `failed` and `delayed` jobs. Also what `GET /health/deep` returns (admin-only). |
+| `GET /jobs/dead-letter?cursor=&limit=` | Failed jobs from **all five queues merged** into one most-recent-first feed, with `queue`, `id`, `name`, `failedReason`, `failed_at` and `attempts_made`. The cursor is a per-queue timestamp watermark rather than a rank offset, so new failures arriving mid-walk cannot cause duplicated or skipped entries (`jobs/deadLetterPagination.ts`). |
+| `POST /jobs/:id/retry` | Body `{ "queue": "<name>" }`. Validates the name against the five real queues (`400` otherwise), finds the job (`404` if absent) and calls BullMQ's `retry()`. Rate-limited. |
+| `GET /ai-scoring/sample` | The weekly human-review sample built by `sample_ai_scoring_evaluations_for_review`. |
+
+`GET /health/ready` is the unauthenticated readiness probe (pings Postgres and Redis).
+
+### 8.3 Logging and alerting
+
+Pino structured logs. Each worker logs `Job completed` (`queueName`, `jobName`, `jobId`, `durationMs`) on success and logs the error on `failed`. Critical paths prefix their message with `ALERT:` — failed webhook persistence, webhook processing, renewal charging and dispatch, and the account purge — so a log-based alert on that substring covers the cases that cost money or lose data.
+
+**Sentry is not wired into the workers.** It is initialised in `app.ts` and called from the Express error handler, so only HTTP errors reach it. A failing job appears in the logs and the admin feed, nowhere else.
+
+### 8.4 Debugging a failed job
+
+1. `GET /api/v1/admin/jobs/dead-letter` — find the job's queue, ID, name and `failedReason`.
+2. Search logs for its `jobId`, or for `ALERT:`, to see the surrounding context.
+3. For billing, look at the `webhook_events` row (`processed`, `payload`) and the `subscriptions` row (`status`, `pending_tx_ref`, `current_period_end`) directly.
+4. For persona or upload problems, read the `generation_status`, `persona_sources.status` and `uploads.status` / `av_scan_status` columns — these are the user-visible state the handlers write.
+5. Fix the cause, then `POST /api/v1/admin/jobs/:id/retry`. Check the "Idempotent?" column in §4 first: do not blindly retry `attempt_renewal_charge` or an email job.
+
