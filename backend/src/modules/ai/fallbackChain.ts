@@ -1,5 +1,5 @@
-import { createOpenAiLikeProvider } from './providers/openaiLike.provider';
-import { AiProvider, ProviderCallOptions, ProviderCallResult } from './providers/types';
+import { createGatewayProvider, GatewayError, isGatewayConfigured } from './providers/gateway.provider';
+import { ProviderCallOptions, ProviderCallResult } from './providers/types';
 import { redisConnection } from '../../config/redis';
 import { env } from '../../config/env';
 import { supabaseAdmin } from '../../config/supabase';
@@ -8,99 +8,36 @@ import { ApiError } from '../../lib/apiError';
 
 const log = createLogger('ai-fallback-chain');
 
-const COOLDOWN_SECONDS = 60 * 60; // 1 hour, matches the pattern proven in the prior codebase
-
 /**
- * FIX (audit finding M6): provider keys now come from env.ts's
- * numberedProviderKeys() accessor (env.ai.providerKeys) instead of
- * reading process.env directly, closing the gap where these specific keys
- * bypassed env.ts's centralized, "nothing reaches into process.env
- * directly" convention. Loops 0-4 to index into the resulting array
- * (env.ts stores keys 1-5 at indices 0-4), but names each provider `-1`
- * through `-5` via `i + 1` to preserve the exact existing naming
- * convention unchanged — these names are used as Redis cooldown keys
- * (cooldownKey()) and log-correlation identifiers, so renaming them would
- * be an unrelated behavior change, not part of this fix.
+ * All AI calls now go through ONE self-hosted llm-gateway
+ * (github.com/Devpaul-01/llm-gateway) instead of this file maintaining its
+ * own Cerebras/Groq/OpenAI key pools. The gateway is itself an
+ * OpenAI-compatible multi-provider router: it resolves model names to
+ * providers, walks a per-request `fallback_models` chain, rotates upstream
+ * keys and trips circuit breakers server-side. Re-implementing that here
+ * would be two layers doing the same job, so this file only:
+ *   1. picks the model chain for the call type (live_turn = fastest tier,
+ *      everything else = the derivative chain — architecture doc §10.1),
+ *   2. cools down the single gateway key if the gateway starts rejecting
+ *      OUR credential (a failure the gateway can't self-heal),
+ *   3. retries once on a fast connection-level failure reaching the gateway,
+ *   4. keeps the per-workspace daily budget and usage logging, which are
+ *      this app's concerns, not the gateway's.
+ * The exported `callWithFallback` contract is unchanged, so no call site
+ * (ai.service.ts and friends) needs to change.
  */
-function buildProviderRegistry(): Record<string, AiProvider[]> {
-  const registry: Record<string, AiProvider[]> = { cerebras: [], groq: [], openai: [] };
 
-  for (let i = 0; i < 5; i++) {
-    const cerebrasKey = env.ai.providerKeys.cerebras[i];
-    if (cerebrasKey) {
-      registry.cerebras.push(
-        createOpenAiLikeProvider({
-          name: `cerebras-${i + 1}`,
-          baseUrl: 'https://api.cerebras.ai/v1',
-          apiKey: cerebrasKey,
-          model: 'gpt-oss-120b',
-        })
-      );
-    }
-    const groqKey = env.ai.providerKeys.groq[i];
-    if (groqKey) {
-      registry.groq.push(
-        createOpenAiLikeProvider({
-          name: `groq-${i + 1}`,
-          baseUrl: 'https://api.groq.com/openai/v1',
-          apiKey: groqKey,
-          model: 'llama-3.3-70b-versatile',
-        })
-      );
-    }
-    const openaiKey = env.ai.providerKeys.openai[i];
-    if (openaiKey) {
-      registry.openai.push(
-        createOpenAiLikeProvider({
-          name: `openai-${i + 1}`,
-          baseUrl: 'https://api.openai.com/v1',
-          apiKey: openaiKey,
-          model: 'gpt-4o-mini',
-        })
-      );
-    }
-  }
-  return registry;
+const TRANSIENT_RETRY_DELAY_MS = 500;
+const KEY_COOLDOWN_REDIS_KEY = 'ai-gateway-key-cooldown';
+
+async function isGatewayKeyCooling(): Promise<boolean> {
+  return (await redisConnection().exists(KEY_COOLDOWN_REDIS_KEY)) === 1;
 }
 
-let _registry: Record<string, AiProvider[]> | null = null;
-function registry() {
-  if (!_registry) _registry = buildProviderRegistry();
-  return _registry;
-}
-
-function cooldownKey(providerName: string) {
-  return `ai-provider-cooldown:${providerName}`;
-}
-
-async function isOnCooldown(providerName: string): Promise<boolean> {
-  const redis = redisConnection();
-  return (await redis.exists(cooldownKey(providerName))) === 1;
-}
-
-async function markCooldown(providerName: string): Promise<void> {
-  const redis = redisConnection();
-  await redis.set(cooldownKey(providerName), '1', 'EX', COOLDOWN_SECONDS);
-  log.warn({ providerName }, 'Provider cooling down after failure');
-}
-
-async function buildQueue(priority: string[]): Promise<AiProvider[]> {
-  const queue: AiProvider[] = [];
-  for (const providerFamily of priority) {
-    const providers = registry()[providerFamily] ?? [];
-    for (const provider of providers) {
-      if (!(await isOnCooldown(provider.name))) {
-        queue.push(provider);
-      }
-    }
-  }
-  return queue;
-}
-
-const RETRYABLE_SIGNALS = ['429', 'rate limit', '401', '403', '500', '502', '503', 'timeout', 'econnrefused'];
-function isRetryable(err: unknown): boolean {
-  const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-  return RETRYABLE_SIGNALS.some((s) => message.includes(s));
+async function coolGatewayKey(): Promise<void> {
+  const seconds = env.ai.gateway.keyCooldownSeconds;
+  await redisConnection().set(KEY_COOLDOWN_REDIS_KEY, '1', 'EX', seconds);
+  log.error({ cooldownSeconds: seconds }, 'Gateway rejected our API key — pausing AI calls (check GATEWAY_API_KEY)');
 }
 
 /** ── Per-workspace AI budget (Redis, daily window) ─────────────────────── */
@@ -179,11 +116,14 @@ const ESTIMATED_COST_USD: Record<string, number> = {
   session_comparison: 0.002,
 };
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 /**
- * Attempts each provider/key in priority order for the given call type
- * ('live_turn' uses the fastest-tier priority list; every other call type
- * uses the derivative priority list, which can tolerate a slower/cheaper
- * provider — architecture doc §10.1).
+ * Calls the gateway for the given call type ('live_turn' uses the
+ * fastest-tier model chain; every other call type uses the derivative
+ * chain, which can tolerate a slower/cheaper first choice). Provider- and
+ * model-level failover happens inside the gateway, per request, via
+ * `fallback_models` — see the file header.
  */
 export async function callWithFallback(
   callType: 'live_turn' | 'persona_synthesis' | 'debrief' | 'scoring' | 'playbook' | 'consistency_check' | 'session_comparison',
@@ -192,30 +132,46 @@ export async function callWithFallback(
 ): Promise<ProviderCallResult> {
   await checkAndReserveBudget(workspaceId, ESTIMATED_COST_USD[callType] ?? 0.01);
 
-  const priority = callType === 'live_turn' ? env.ai.liveTurnPriority : env.ai.derivativePriority;
-  const queue = await buildQueue(priority);
-
-  if (queue.length === 0) {
-    throw ApiError.aiUnavailable('All AI providers are currently unavailable. Please try again shortly.');
+  if (!isGatewayConfigured()) {
+    log.error('AI gateway is not configured (GATEWAY_BASE_URL / GATEWAY_API_KEY) — every AI call will fail');
+    throw ApiError.aiUnavailable();
   }
 
-  let lastErr: unknown;
-  for (const provider of queue) {
+  if (await isGatewayKeyCooling()) {
+    throw ApiError.aiUnavailable('AI is temporarily unavailable. Please try again shortly.');
+  }
+
+  const models = callType === 'live_turn' ? env.ai.gateway.liveTurnModels : env.ai.gateway.derivativeModels;
+  const provider = createGatewayProvider(models);
+
+  try {
+    let result: ProviderCallResult;
     try {
-      const result = await provider.call(options);
-      await recordUsage(workspaceId, callType, result);
-      return result;
+      result = await provider.call(options);
     } catch (err) {
-      lastErr = err;
-      log.warn({ provider: provider.name, err }, 'Provider call failed');
-      if (isRetryable(err)) {
-        await markCooldown(provider.name);
-        continue;
-      }
-      throw err; // non-retryable — bail immediately rather than burning through the whole chain
+      // One quick retry for a connection-level blip reaching the gateway
+      // itself. Anything the gateway answered (including "every upstream
+      // failed") has already been through its own failover — don't repeat it.
+      if (!(err instanceof GatewayError && err.kind === 'network')) throw err;
+      log.warn({ err }, 'Gateway unreachable — retrying once');
+      await sleep(TRANSIENT_RETRY_DELAY_MS);
+      result = await provider.call(options);
     }
-  }
 
-  log.error({ lastErr }, 'All providers in fallback chain exhausted');
-  throw ApiError.aiUnavailable();
+    await recordUsage(workspaceId, callType, result);
+    return result;
+  } catch (err) {
+    const kind = err instanceof GatewayError ? err.kind : 'unknown';
+    log.warn({ err, callType, kind, status: err instanceof GatewayError ? err.status : undefined }, 'Gateway call failed');
+
+    if (err instanceof GatewayError && err.kind === 'auth') {
+      await coolGatewayKey();
+    } else if (kind === 'client' || kind === 'unknown') {
+      // A request the gateway rejected as malformed, or an unexpected error
+      // here — an application bug, not a transient condition.
+      log.error({ err, callType }, 'Gateway call failed with a non-transient error');
+    }
+
+    throw ApiError.aiUnavailable();
+  }
 }
