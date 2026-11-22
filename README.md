@@ -14,6 +14,23 @@ A session runs in real time: the buyer's reply, their private internal monologue
 
 The backend — API, five background-job queues, AI provider fallback, billing, real-time status channels — and the mobile client that drives it live in one repository: `backend/` and `frontend/`.
 
+## See it in action
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-23-live-session.png" alt="Live session: the buyer replies in character while interest, trust and confusion meters update every turn" width="200"><br><sub><b>Live session</b><br>interest, trust and confusion move every turn</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-11-debrief.png" alt="Debrief: what worked, what to improve, a coachable moment and a six-axis skill score" width="200"><br><sub><b>Debrief</b><br>specific coaching and a six-axis score</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-12-replay.png" alt="Replay: a turn-by-turn chart of how the buyer felt, with their private thoughts revealed" width="200"><br><sub><b>Replay</b><br>how the buyer felt, and what they were thinking</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-13-comparison.png" alt="Before and after: per-axis score deltas between the first attempt and the retry" width="200"><br><sub><b>Retry comparison</b><br>exact per-axis deltas against attempt one</sub></td>
+</tr>
+</table>
+
+</div>
+
+More screens (phone light and dark, tablet) are in [`docs/screenshots/`](./docs/screenshots/).
+
 ## The problem
 
 Sales pitches fail in a specific, nameable way, and you usually only find out live, with a real prospect, when it's too late to try a different line. Role-playing with a colleague helps until they get tired of being the skeptical buyer. What's actually missing is a repeatable version of the hard conversation, with an honest read on what changed between attempts.
