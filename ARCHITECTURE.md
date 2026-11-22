@@ -6,7 +6,7 @@
 
 ## 1. System Overview
 
-DryRun's backend is a single Node.js/Express/TypeScript service backed by **Supabase (Postgres)** for persistence and **Redis** for caching, rate limiting, distributed locks, and job queues (**BullMQ**). AI generation runs through a self-hosted fallback chain across three OpenAI-compatible providers (Cerebras, Groq, OpenAI) rather than a single vendor dependency.
+DryRun's backend is a single Node.js/Express/TypeScript service backed by **Supabase (Postgres)** for persistence and **Redis** for caching, rate limiting, distributed locks, and job queues (**BullMQ**). AI generation runs through a self-hosted LLM gateway ([llm-gateway](https://github.com/Devpaul-01/llm-gateway)) — an OpenAI-compatible router that fails over across providers (Cerebras, Groq, OpenAI, …) — rather than a single vendor dependency.
 
 The service supports three interchangeable startup modes from one codebase:
 
@@ -44,9 +44,7 @@ flowchart TB
     end
 
     subgraph External["External Services"]
-        AI1[Cerebras]
-        AI2[Groq]
-        AI3[OpenAI]
+        GW[LLM gateway<br/>Cerebras / Groq / OpenAI / ...]
         SBAUTH[Supabase Auth]
         FW[Flutterwave]
         EXPO[Expo Push]
@@ -63,12 +61,12 @@ flowchart TB
     RD --> W1 & W2 & W3 & W4 & W5
     SCHED --> RD
 
-    W1 --> AI1 & AI2 & AI3
-    W2 --> AI1 & AI2 & AI3
+    W1 --> GW
+    W2 --> GW
     W3 --> FW
     W4 --> EXPO
     W4 --> RESEND
-    EX --> AI1 & AI2 & AI3
+    EX --> GW
 ```
 
 ---
@@ -237,21 +235,23 @@ A read-through wrapper (`cached()`) caches a genuine `null`/`undefined` result t
 
 ## 7. AI Integration
 
-### Provider fallback, not a single vendor dependency
+### Gateway-side provider fallback, not a single vendor dependency
 
-Live-turn and derivative AI calls (persona synthesis, debriefs, scoring, playbooks, comparisons) route through `callWithFallback()`, which builds a priority-ordered queue across three provider families — Cerebras, Groq, and OpenAI, each supporting up to five independently configured API keys — and walks it in order. A provider that fails with a retryable signal (`429`, `500`–`503`, timeout, connection refused) goes on a one-hour Redis cooldown and the chain moves to the next provider; a non-retryable error bails immediately rather than burning through the whole chain for an error that won't resolve by switching providers. Live-turn calls use a fastest-tier priority order; every other call type uses a priority order that can tolerate a slower or cheaper provider.
+Live-turn and derivative AI calls (persona synthesis, debriefs, scoring, playbooks, comparisons) route through `callWithFallback()`, which sends one request to a self-hosted [llm-gateway](https://github.com/Devpaul-01/llm-gateway) carrying an ordered model chain (`model` + `fallback_models`). The gateway resolves each entry to a provider, rotates upstream keys, trips circuit breakers and walks the chain itself, so this layer deliberately doesn't repeat that work. Live-turn calls use a fastest-tier chain; every other call type uses a chain that can tolerate a slower or cheaper first choice. What stays on this side: the per-workspace budget and usage log, a single retry when the gateway can't be reached (connection failure or a bare proxy 502/503/504 — not timeouts, and not anything the gateway itself answered), and a Redis cooldown on the one gateway key, set only when the gateway rejects *this app's* credential (`401`/`403`). The gateway's own rate-limit, concurrency and daily-token-budget `429`s never cool the key — they aren't the key's fault and resolve on their own. Every failure surfaces to callers as `503 AI_UNAVAILABLE`.
 
 ```mermaid
 flowchart LR
     START[callWithFallback] --> BUDGET{Budget check<br/>Redis Lua script}
     BUDGET -->|exceeded| REJECT[429 AI_BUDGET_EXCEEDED]
-    BUDGET -->|reserved| QUEUE[Build provider queue<br/>skip any on cooldown]
-    QUEUE --> TRY[Try next provider]
-    TRY -->|success| USAGE[Record usage → ai_usage_log]
-    TRY -->|retryable failure| COOLDOWN[1hr Redis cooldown]
-    COOLDOWN --> TRY
-    TRY -->|non-retryable| FAIL[Bail immediately]
-    TRY -->|queue exhausted| UNAVAIL[503 AI_UNAVAILABLE]
+    BUDGET -->|reserved| KEY{Gateway key<br/>cooling down?}
+    KEY -->|yes| UNAVAIL[503 AI_UNAVAILABLE]
+    KEY -->|no| GWCALL[One gateway request<br/>model + fallback_models]
+    GWCALL -->|success| USAGE[Record usage → ai_usage_log<br/>upstream provider/model that answered]
+    GWCALL -->|unreachable| RETRY[Retry once]
+    RETRY -->|success| USAGE
+    RETRY -->|fails| UNAVAIL
+    GWCALL -->|401/403: our key rejected| COOLDOWN[Cool gateway key<br/>5 min default] --> UNAVAIL
+    GWCALL -->|gateway chain exhausted,<br/>429 caps, 400| UNAVAIL
 ```
 
 ### Structured output is never trusted on receipt
@@ -343,7 +343,7 @@ flowchart TB
     L --> M[Publish realtime status: ready_for_review]
 ```
 
-**Extraction picks the right tool per source kind**, not one generic parser: `pdf-parse` for PDFs, `mammoth` for DOCX, a stripped-HTML fetch for public URLs (deliberately public-page-only — no authenticated scraping, a stated product constraint), and a dedicated vision-model OCR path for images. The OCR path is kept intentionally narrow and separate from the main provider fallback chain: it's routed through a direct call using only the first configured OpenAI key, not the full cooldown-aware registry, because widening the shared `ProviderCallOptions` type to support image content blocks would touch all five prompt builders for a capability only this one call needs — a deliberate scope boundary, not an oversight.
+**Extraction picks the right tool per source kind**, not one generic parser: `pdf-parse` for PDFs, `mammoth` for DOCX, a stripped-HTML fetch for public URLs (deliberately public-page-only — no authenticated scraping, a stated product constraint), and a dedicated vision-model OCR path for images. The OCR path is kept intentionally narrow and separate from `callWithFallback()`: it calls the same gateway directly (with a vision-capable model chain) rather than going through the shared pipeline, because widening the shared `ProviderCallOptions` type to support image content blocks would touch all five prompt builders for a capability only this one call needs — a deliberate scope boundary, not an oversight. It still gets provider failover from the gateway, but not the per-workspace budget or usage log.
 
 **Optimistic concurrency protects a user's manual edit against an in-flight background write.** If a user edits a still-"generating" persona placeholder while synthesis is running, the synthesis worker's final write is conditioned on the persona's `updated_at` matching what it captured before the AI call started; any concurrent user edit advances that timestamp, so the conditional update matches zero rows and the worker skips its own write rather than silently overwriting what the user just typed.
 
