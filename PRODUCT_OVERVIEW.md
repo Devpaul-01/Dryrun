@@ -37,6 +37,16 @@ A persona is either:
 
 Document- and URL-based personas go through an asynchronous pipeline (extract → synthesize) because OCR and LLM generation aren't instant; the founder starts the session as soon as extraction finishes, watching the persona go from a "Generating…" placeholder to a filled-in character over a realtime status channel.
 
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-09-buyer-new.png" alt="New buyer: describe one, paste text, use a URL, or upload a document" width="220"><br><sub>Building a buyer: describe one, paste text, use a URL, or upload a document</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### The practice session itself
 A session pairs a persona with a scenario (cold open, skeptic, price pushback, bad timing, "the long goodbye," radio silence, or a single-exchange micro-drill), an optional pressure modifier (a decision-maker watching, a competitor already in play, a rushed buyer, compliance concerns — up to two stacked at once), a difficulty level that scales automatically with how many sessions the founder has completed, and an optional goal ("get a meeting booked," "get a real yes/no on budget," "surface an objection," "just get a reply").
 
@@ -44,17 +54,69 @@ Every message exchange runs through a single AI call that returns, in one struct
 
 If a goal is achieved mid-conversation, the session ends there — "you got what you came for" is treated as a hard stop, not a suggestion the founder can ignore. If the AI signals a natural ending (the buyer's genuinely done, one way or another), the founder decides whether to accept it or push for a few more exchanges.
 
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-10-session-wizard.png" alt="New session wizard: scenario, buyer, pressure modifiers, difficulty and goal" width="220"><br><sub>Setting up a session: scenario, buyer, pressure, difficulty, goal</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-23-live-session.png" alt="Live session: the buyer replies in character while interest, trust and confusion meters update every turn" width="220"><br><sub>The live session: interest, trust and confusion update on every turn</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### Getting the read afterward
 Once a session ends, two things generate in the background: a **debrief** (one specific strength, one specific improvement, and the single most important coachable moment from that exact conversation) and a **skill score** across six axes — clarity, value communication, discovery questions, objection handling, brevity, and call-to-action strength — plus a composite and a named weakest/strongest axis. The founder doesn't wait on these; they show up asynchronously and the founder gets notified.
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-11-debrief.png" alt="Debrief: what worked, what to improve, a coachable moment and a six-axis skill score" width="220"><br><sub>The debrief: strength, improvement, coachable moment, six-axis score</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-12-replay.png" alt="Replay: a turn-by-turn chart of how the buyer felt, with their private thoughts revealed" width="220"><br><sub>The replay: the buyer's mood by turn, with their private thoughts</sub></td>
+</tr>
+</table>
+
+</div>
 
 ### Retrying and measuring improvement
 A retry reuses the *same* persona and scenario deliberately — the product's position is that "your retry attempt against your original session" only means something if the buyer didn't also change. Once both sessions are scored, the system computes an exact numeric delta per axis (never AI-generated arithmetic — computed directly in code) and asks the model for one sentence of encouraging, specific framing around the most notable change.
 
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-13-comparison.png" alt="Before and after: per-axis score deltas between the first attempt and the retry" width="220"><br><sub>Retry comparison: exact per-axis deltas against the first attempt</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### Turning a good session into a repeatable script
 If a session goes well, the founder can generate a **playbook** from it: an opening message, a set of discovery questions, canned objection responses, a closing call-to-action, and one key insight — extracted from the actual transcript, not written from scratch. Playbooks can be shared via a public, unauthenticated link (with an optional attribution toggle), so a founder can hand a working script to a co-founder or a new hire without giving them app access.
 
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-15-playbook-detail.png" alt="Playbook: opening message, discovery questions and objection responses, each copyable" width="220"><br><sub>A playbook extracted from a real session, each block copyable</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### Staying on track over time
 Two background systems close the loop without the founder having to ask for them: a **rolling skill trend** (a 30-session rolling composite average, recomputed after every scored session) and a **curriculum recommendation** (identifies the weakest of the six axes from the last ten sessions, proposes a two-session focused drill on it, and adds a third "spaced repetition" session if a scenario type hasn't been practiced in three weeks). A weekly summary email ties this together — sessions completed, score trend versus last week, strongest/weakest axis, goals hit, badges earned, and the current curriculum focus.
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-04-progress.png" alt="Progress: skill trend, suggested practice plan, goal success rate and badges" width="220"><br><sub>Progress: skill trend, suggested next drills, goal success rate, badges</sub></td>
+</tr>
+</table>
+
+</div>
 
 ### Trying it before signing up
 A visitor can run a capped demo session (no login, no persona storage, eight messages) against one of three preset personas. Converting to a real account migrates that exact conversation — transcript, persona, and all — into the new account as their first completed session, so the demo isn't throwaway; it becomes real history.
