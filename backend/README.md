@@ -143,21 +143,23 @@ depths).
 
 ## Connecting the Expo app
 
-This repo is backend-only; the mobile client lives in a separate Expo
-project. Three things the Expo app needs to know about this backend:
+The mobile client is in [`../frontend/`](../frontend/README.md); its
+variables are listed in [`../docs/CONFIGURATION.md`](../docs/CONFIGURATION.md#2-mobile-client).
+Three things it needs from this backend:
 
-1. **API base URL** — point the Expo app's API client at wherever this
-   backend is deployed (`http://localhost:3001` for local dev against the
-   default `PORT`).
-2. **OAuth deep link** — `FRONTEND_URL_MOBILE_SCHEME` (default
-   `dryrun://auth-callback`) must match the URL scheme registered in the
-   Expo app's `app.json`/`app.config.ts` (the `scheme` field). This is what
-   lets a completed OAuth flow hand control back to the app instead of
-   leaving the user stuck in a browser tab. Per
-   `modules/auth/auth.routes.ts`'s own comment: mobile clients use
+1. **API base URL** — set `EXPO_PUBLIC_API_BASE_URL` in `frontend/.env` to
+   wherever this backend is deployed (`http://localhost:3001` for local dev
+   against the default `PORT`; a physical device needs an address it can
+   reach, not `localhost`). The client appends `/api/v1` itself.
+2. **OAuth deep link** — the URL scheme is the `scheme` field in
+   `frontend/app.json` (`dryrun`). This backend does not read
+   `FRONTEND_URL_MOBILE_SCHEME`; the variable is parsed but unused. Per
+   `modules/auth/auth.routes.ts`'s own comment, mobile clients use
    `expo-auth-session` directly against Supabase Auth's OAuth endpoint with
    a platform-computed redirect URI, not this backend's `/auth/google/start`
-   route — that route is the *web* OAuth flow's entrypoint only.
+   route — that route is the *web* OAuth flow's entrypoint only. The client
+   therefore also needs `EXPO_PUBLIC_SUPABASE_URL` and
+   `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
 3. **Push notifications** — set `EXPO_ACCESS_TOKEN` (from your Expo
    project, for sending push notifications via `expo-server-sdk` — see
    `modules/notifications/push.service.ts`). The Expo app registers its
