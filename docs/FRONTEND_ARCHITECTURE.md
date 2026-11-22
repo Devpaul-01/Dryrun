@@ -2,6 +2,8 @@
 
 **Scope:** The Expo / React Native / TypeScript client that consumes the existing DryRun backend (`backend/`, Express + Supabase + BullMQ, documented in `ARCHITECTURE.md` and `PRODUCT_OVERVIEW.md`). This document is architecture only — no implementation. Every API detail below was taken directly from the backend source (routes, Zod schemas, services, `db/schema.sql`) on branch `main` at commit `41fc29f4`. Where the backend is ambiguous, incomplete, or has a gap, it's called out explicitly in **§11 — Gaps & Open Questions** rather than papered over.
 
+> **Status:** this is the design document the client in [`frontend/`](../frontend/README.md) was built from, and the client is now implemented. It is written in the future tense and describes the plan, so where it and the code differ, the code is authoritative. Setup, project layout and testing for the implemented app are in [`frontend/README.md`](../frontend/README.md). §11 lists gaps found in the backend at design time; check them against the current code before relying on them.
+
 ---
 
 ## Table of Contents
