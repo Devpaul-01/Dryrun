@@ -16,8 +16,9 @@ feedback. This is the `backend/` package of the DryRun monorepo; the Expo
   `config/supabase.ts`)
 - **Queues/scheduling:** BullMQ on Redis
 - **Cache/locks/rate-limiting:** Redis (`config/redis.ts`, `config/cache.ts`)
-- **AI:** a provider-agnostic fallback chain across Cerebras/Groq/OpenAI
-  (`modules/ai/fallbackChain.ts`)
+- **AI:** all calls via a self-hosted llm-gateway, which does the
+  multi-provider fallback (`modules/ai/fallbackChain.ts`,
+  `modules/ai/providers/gateway.provider.ts`)
 - **Payments:** Flutterwave (behind a provider interface —
   `modules/billing/paymentProvider.interface.ts` — so a second provider is a
   contract implementation, not a rewrite)
@@ -182,16 +183,17 @@ exact contract.
 
 ## AI providers
 
-Set at least one provider's `_1` key (`CEREBRAS_API_KEY_1`, `GROQ_API_KEY_1`,
-or `OPENAI_API_KEY_1`) for the app to function at all — every AI-dependent
-feature (live conversation turns, persona generation, debriefs, scoring,
-playbooks) goes through the fallback chain in
-`modules/ai/fallbackChain.ts`, which needs at least one configured provider
-in whichever priority list (`AI_LIVE_TURN_MODEL_PRIORITY` /
-`AI_DERIVATIVE_MODEL_PRIORITY`) it's building. OpenAI specifically is also
-needed for image-based persona-source OCR
-(`modules/files/extraction.service.ts`), which calls a vision-capable model
-directly rather than through the fallback chain.
+Set `GATEWAY_BASE_URL` and `GATEWAY_API_KEY` for the app to function at all
+— every AI-dependent feature (live conversation turns, persona generation,
+debriefs, scoring, playbooks) goes through
+[llm-gateway](https://github.com/Devpaul-01/llm-gateway) via
+`modules/ai/fallbackChain.ts`. The gateway picks the provider, walks the
+per-call-type model chain (`AI_GATEWAY_LIVE_TURN_MODELS` /
+`AI_GATEWAY_DERIVATIVE_MODELS`) and rotates upstream keys; provider API keys
+live in the gateway project, not in this app. Image-based persona-source OCR
+(`modules/files/extraction.service.ts`) calls the same gateway with a
+vision-capable chain (`AI_GATEWAY_VISION_MODELS`). See
+[`docs/CONFIGURATION.md`](../docs/CONFIGURATION.md) §1.4.
 
 ## Known limitations
 
