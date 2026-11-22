@@ -10,6 +10,7 @@ Longer-form documentation for DryRun. Start with the [root README](../README.md)
 | [`CONFIGURATION.md`](./CONFIGURATION.md) | find an environment variable, its default, and what happens when it is missing |
 | [`FRONTEND_ARCHITECTURE.md`](./FRONTEND_ARCHITECTURE.md) | read the design the mobile client was built from (API surface, data models, navigation, design system) |
 | [`backend-takeover/AUDIT.md`](./backend-takeover/AUDIT.md) | follow the dated log of audit passes and the fixes they led to |
+| [`screenshots/`](./screenshots/) | see every screen of the mobile client: 22 screens in phone dark, 23 in phone light and 23 in tablet light |
 
 Package-level guides:
 
