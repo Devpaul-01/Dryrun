@@ -84,6 +84,8 @@ docs/         Longer-form documentation
 .github/      CI: backend-ci.yml (typecheck, lint, build, test) and frontend-ci.yml
 ```
 
+A guide to every document is in [`docs/README.md`](./docs/README.md).
+
 Inside `backend/src/`:
 
 ```
