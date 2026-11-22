@@ -1,6 +1,6 @@
 # DryRun — Backend Architecture
 
-**Scope:** The API and background-worker backend. The Expo mobile client is a separate, in-progress project that consumes this API — this document does not cover client-side architecture.
+**Scope:** The API and background-worker backend. The Expo mobile client lives in the same repository (`frontend/`) and consumes this API — this document does not cover client-side architecture; see [`docs/FRONTEND_ARCHITECTURE.md`](./docs/FRONTEND_ARCHITECTURE.md) and [`frontend/README.md`](./frontend/README.md).
 
 ---
 
@@ -20,7 +20,7 @@ All three call the exact same underlying logic. `start-all.ts` doesn't duplicate
 
 ```mermaid
 flowchart TB
-    subgraph Client["Mobile Client (Expo — separate project)"]
+    subgraph Client["Mobile Client (Expo, frontend/)"]
         APP[React Native App]
     end
 
