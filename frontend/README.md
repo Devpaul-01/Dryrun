@@ -4,6 +4,23 @@ Expo / React Native / TypeScript client for DryRun, consuming the API in [`../ba
 
 See [`../docs/FRONTEND_ARCHITECTURE.md`](../docs/FRONTEND_ARCHITECTURE.md) for the design document the client was built from (API surface, data models, navigation, design system, milestones), and [`../docs/CONFIGURATION.md`](../docs/CONFIGURATION.md#2-mobile-client) for the environment variables.
 
+## Screens
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="../docs/screenshots/phone-light-10-session-wizard.png" alt="New session wizard: scenario, buyer, pressure modifiers, difficulty and goal" width="190"><br><sub><b>New session</b><br>scenario, buyer, pressure, goal</sub></td>
+<td align="center" valign="top"><img src="../docs/screenshots/phone-light-23-live-session.png" alt="Live session: the buyer replies in character while interest, trust and confusion meters update every turn" width="190"><br><sub><b>Live session</b><br>meters update every turn</sub></td>
+<td align="center" valign="top"><img src="../docs/screenshots/phone-light-11-debrief.png" alt="Debrief: what worked, what to improve, a coachable moment and a six-axis skill score" width="190"><br><sub><b>Debrief</b><br>coaching and six-axis score</sub></td>
+<td align="center" valign="top"><img src="../docs/screenshots/phone-light-13-comparison.png" alt="Before and after: per-axis score deltas between the first attempt and the retry" width="190"><br><sub><b>Retry comparison</b><br>per-axis deltas</sub></td>
+</tr>
+</table>
+
+</div>
+
+Every screen in phone (light and dark) and tablet is in [`../docs/screenshots/`](../docs/screenshots/).
+
 ## Setup
 
 Start the backend first (see [`../backend/README.md`](../backend/README.md)), then:
