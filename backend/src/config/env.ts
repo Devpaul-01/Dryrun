@@ -173,3 +173,20 @@ if (env.isProduction) {
     );
   }
 }
+
+/**
+ * Same reasoning as the Flutterwave warning above: a missing gateway URL
+ * or key doesn't stop the app booting, it makes every AI call fail later
+ * with a 503, so surface it loudly at startup in production.
+ */
+if (env.isProduction) {
+  const missingGatewayConfig = [
+    !env.ai.gateway.baseUrl && 'GATEWAY_BASE_URL',
+    !env.ai.gateway.apiKey && 'GATEWAY_API_KEY',
+  ].filter(Boolean);
+  if (missingGatewayConfig.length > 0) {
+    console.warn(
+      `[env] WARNING: running in production with missing AI gateway configuration: ${missingGatewayConfig.join(', ')}. Every AI call will fail until these are set.`
+    );
+  }
+}
