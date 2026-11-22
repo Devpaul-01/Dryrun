@@ -34,17 +34,24 @@ Every environment variable the DryRun backend and mobile client read, what it do
 |---|---|---|
 | `SUPABASE_SEND_EMAIL_HOOK_SECRET` | empty | The `v1,whsec_<base64>` secret from Authentication → Hooks → Send Email. Used to verify `POST /api/v1/auth/email-hook` (Standard Webhooks, HMAC over the raw body). Without it the hook endpoint answers with an error, so password-reset emails are not sent. See `modules/auth/emailHook.service.ts`. |
 
-### 1.4 AI providers
+### 1.4 AI (llm-gateway)
 
-At least one `*_API_KEY_1` must be set for any AI feature to work (live turns, persona synthesis, debriefs, scoring, playbooks).
+All AI traffic goes through one self-hosted [llm-gateway](https://github.com/Devpaul-01/llm-gateway) — an OpenAI-compatible router that owns provider selection, per-request model fallback and upstream key rotation. `GATEWAY_BASE_URL` and `GATEWAY_API_KEY` must both be set for any AI feature to work (live turns, persona synthesis, debriefs, scoring, playbooks, image OCR). Provider API keys (Cerebras, Groq, OpenAI, …) are added to the gateway project itself (`POST /admin/credentials` on the gateway), not to this app. The app boots without them, but every AI call then fails with `503 AI_UNAVAILABLE`, and production startup logs a warning.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `CEREBRAS_API_KEY_1` … `_5` | unset | Up to five independent keys per provider; each unset slot is skipped. |
-| `GROQ_API_KEY_1` … `_5` | unset | As above. |
-| `OPENAI_API_KEY_1` … `_5` | unset | As above. Image-based persona-source OCR calls OpenAI directly using key `_1` only, outside the fallback chain (`modules/files/extraction.service.ts`). |
-| `AI_LIVE_TURN_MODEL_PRIORITY` | `cerebras,groq,openai` | Provider order for live conversation turns (fastest first). |
-| `AI_DERIVATIVE_MODEL_PRIORITY` | `groq,openai,cerebras` | Provider order for debriefs, scoring, persona synthesis, playbooks, comparisons. |
+| `GATEWAY_BASE_URL` | unset | The gateway's OpenAI-compatible base, including `/v1` (requests go to `{base}/chat/completions`). Trailing slashes are stripped. |
+| `GATEWAY_API_KEY` | unset | A gateway key (`POST /admin/gateway-keys`) for the project that holds your provider credentials. |
+| `AI_GATEWAY_LIVE_TURN_MODELS` | `cerebras:gpt-oss-120b,llama-3.3-70b-versatile,gpt-4o-mini` | Ordered chain for live conversation turns (fastest first). The first entry is sent as `model`, the rest as `fallback_models`; the gateway walks them in order. Entries are bare model names the gateway already maps to a provider, or `provider:model`. |
+| `AI_GATEWAY_DERIVATIVE_MODELS` | `llama-3.3-70b-versatile,gpt-4o-mini,cerebras:gpt-oss-120b` | Same format, for debriefs, scoring, persona synthesis, playbooks, comparisons. |
+| `AI_GATEWAY_VISION_MODELS` | `gpt-4o-mini,meta-llama/llama-4-scout-17b-16e-instruct` | Same format, for image-based persona-source OCR (`modules/files/extraction.service.ts`). Every entry must be vision-capable. |
+| `AI_GATEWAY_TIMEOUT_MS` | `60000` | Whole-request timeout; must cover the gateway's own failover chain, not one upstream call. Timeouts are not retried. |
+| `AI_GATEWAY_KEY_COOLDOWN_SECONDS` | `300` | How long AI calls are paused after the gateway rejects this app's key (401/403). Other failures (rate limit, daily token budget, upstream outage) never trigger it. |
+
+Replaces the former `CEREBRAS_API_KEY_n` / `GROQ_API_KEY_n` / `OPENAI_API_KEY_n` (n = 1–5), `AI_LIVE_TURN_MODEL_PRIORITY` and `AI_DERIVATIVE_MODEL_PRIORITY` variables, which are no longer read.
+
+The gateway enforces its own per-key rate limit, per-project concurrency cap and daily token budget; those are separate from the per-workspace budget below.
+
 | `DEFAULT_AI_DAILY_BUDGET_USD_PER_WORKSPACE` | `5` | Per-workspace daily spend ceiling, enforced atomically by a Redis Lua script (`modules/ai/fallbackChain.ts`). Parsed as an integer, so `2.5` is not representable. |
 
 ### 1.5 Billing (Flutterwave)
