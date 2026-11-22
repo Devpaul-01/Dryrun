@@ -21,7 +21,7 @@ Sales pitches fail in a specific, nameable way, and you usually only find out li
 ## What I actually built
 
 - **A live-turn AI conversation engine** where every message exchange returns, in one validated structured response, an in-character reply, a private monologue, a signed interest/trust/confusion delta, buying-intent and objection-likelihood scores, and a goal-achievement judgment — with strict schema validation, a bounded retry on failure, and a neutral fallback if the retry also fails, so a malformed model response never reaches the user as a broken reply.
-- **A three-provider AI fallback chain** (Cerebras, Groq, OpenAI — up to five keys each) with Redis-backed cooldowns and an atomic per-workspace daily budget enforced via a Lua script, so two concurrent calls for the same workspace can't both slip past the budget check.
+- **AI routed through a self-hosted [LLM gateway](https://github.com/Devpaul-01/llm-gateway)** that does multi-provider failover (Cerebras, Groq, OpenAI, …) per request, with an atomic per-workspace daily budget enforced via a Lua script, so two concurrent calls for the same workspace can't both slip past the budget check.
 - **A persona-ingestion pipeline** that builds a buyer character from pasted text, a public URL, or an uploaded document (PDF/DOCX/image-via-OCR) — async extraction and synthesis, live status pushed over a Supabase Realtime channel that's authorized at the database layer, not just by what the API chooses to publish.
 - **Five BullMQ queues, twenty-one job handlers, seven cron schedules** — debrief/scoring generation, skill-trend and curriculum recomputation, weekly summaries, renewal dunning, account purges, a cursor-paginated dead-letter feed merged correctly across all five queues using timestamp watermarks instead of a naive rank offset (which breaks under concurrent writes — this one doesn't).
 - **A concurrency bug found and fixed at the database level**: message ordering used to race under concurrent requests for the same session; it's now an atomic Postgres RPC, not a client-side read-then-increment.
@@ -40,7 +40,7 @@ Mobile Client (Expo / React Native)
         │
    enqueue jobs
         ▼
-  5 BullMQ queues ──► workers ──► Cerebras / Groq / OpenAI, Flutterwave, Expo Push, Resend
+  5 BullMQ queues ──► workers ──► LLM gateway, Flutterwave, Expo Push, Resend
 ```
 
 Three interchangeable startup modes from one codebase — `server.js` (API only), `jobs/index.js` (workers only), `start-all.js` (both, one process) — with zero duplicated logic between them.
@@ -65,7 +65,7 @@ Product workflows and the reasoning behind them: **[PRODUCT_OVERVIEW.md](./PRODU
 | Database | Supabase (Postgres), via `@supabase/supabase-js` — service-role client |
 | Cache / queues / locks | Redis (`ioredis`), BullMQ |
 | Validation | Zod |
-| AI providers | Cerebras, Groq, OpenAI — OpenAI-compatible chat-completions interface, one adapter for all three |
+| AI | [llm-gateway](https://github.com/Devpaul-01/llm-gateway) — OpenAI-compatible chat-completions; it fronts Cerebras, Groq, OpenAI and others |
 | Auth | Supabase Auth (email/password + Google OAuth), JWT bearer tokens |
 | File storage | Supabase Storage, signed upload/download URLs |
 | Malware scanning | ClamAV (`clamscan`) |
@@ -134,7 +134,7 @@ SUPABASE_SERVICE_ROLE_KEY
 REDIS_URL
 ```
 
-These three are read lazily by `config/env.ts` — a missing one throws on the first Supabase or Redis call rather than at process start, so check `GET /health/ready` after booting. Everything else (AI provider keys, Flutterwave keys, email provider, PostHog, Sentry, ClamAV host, `FRONTEND_URL`) is optional and feature-gates gracefully: the app boots without them, with the corresponding feature disabled or, for AI providers specifically, a smaller effective fallback chain. The complete list, with defaults, is in [`docs/CONFIGURATION.md`](./docs/CONFIGURATION.md).
+These three are read lazily by `config/env.ts` — a missing one throws on the first Supabase or Redis call rather than at process start, so check `GET /health/ready` after booting. Everything else (AI gateway URL/key, Flutterwave keys, email provider, PostHog, Sentry, ClamAV host, `FRONTEND_URL`) is optional and feature-gates gracefully: the app boots without them, with the corresponding feature disabled (for AI, every AI call fails with `503 AI_UNAVAILABLE` until `GATEWAY_BASE_URL` and `GATEWAY_API_KEY` are set). The complete list, with defaults, is in [`docs/CONFIGURATION.md`](./docs/CONFIGURATION.md).
 
 ### Build & run
 

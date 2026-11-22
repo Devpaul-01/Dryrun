@@ -68,7 +68,7 @@ flowchart LR
     end
 
     subgraph EXT["External"]
-        AI[Cerebras / Groq / OpenAI]
+        AI[LLM gateway]
         FW[Flutterwave]
         EX[Expo Push / Resend / SMTP]
         AV[ClamAV]
@@ -297,7 +297,7 @@ One shared `ioredis` connection (`config/redis.ts`, created lazily, `maxRetriesP
 | 1 | **Queues and scheduler** | `jobs/*` | BullMQ's own key space. |
 | 2 | **Rate limiting** | `middleware/rateLimit.ts` | `ratelimit:{baseUrl}{path}:{identity}:{windowBucket}`, `INCR` then `EXPIRE` on the first hit. Fixed window, counted **per route**, keyed by user ID or IP. Eight tiers — see ARCHITECTURE.md §11. |
 | 3 | **Caches** | `config/cache.ts`, `middleware/resolveWorkspace.ts`, `config/systemConfig.ts` | Read-through cache with direct-key and tag-set invalidation (tag sets expire after 24 h as a backstop); workspace context cached 30 s; `system_config` values cached 30 s. |
-| 4 | **AI provider cooldown** | `modules/ai/fallbackChain.ts` | `ai-provider-cooldown:{provider}`, set for 1 hour when a provider fails with a retryable error. |
+| 4 | **AI gateway key cooldown** | `modules/ai/fallbackChain.ts` | `ai-gateway-key-cooldown`, set (default 5 min, `AI_GATEWAY_KEY_COOLDOWN_SECONDS`) only when the gateway rejects this app's key with a 401/403. |
 | 5 | **AI budget** | `modules/ai/fallbackChain.ts`, `config/redis.ts` | `ai-budget:{workspaceId}:{day}`, reserved by the `checkAndReserveBudget` **Lua script** so read, compare and increment are one atomic step. |
 | 6 | **Request idempotency** | `lib/idempotency.ts`, `config/redis.ts` | `idempotency:{scope}:{key}`. The `claimIdempotencyKey` Lua script atomically claims the key for 30 s; the winner runs the work and caches its result for 24 h, while a losing caller polls for that result instead of running the work again. A failed attempt clears its own claim at once. |
 | 7 | **Locks and counters** | `attemptRenewalCharge.worker.ts`, `purgeSoftDeletedAccounts.worker.ts`, `modules/demo/demo.service.ts` | `renewal-lock:{subscriptionId}` (`SET NX PX 30000`); `purge-soft-deleted-accounts-lock` (`SET NX PX 300000`, refreshed after each candidate); `demo-abuse:{sha256(ip)}` (`INCR`, 24 h) allowing one demo per IP per day. |
@@ -345,7 +345,7 @@ There is **no dead-letter queue and no automated re-drive**. A job that exhausts
 | A cron-fired job fails | The next scheduled run. All seven are written to be safe to run again. |
 | A renewal charge is declined | The dunning chain: attempts on day 0, 1, 4 and 8, then cancellation. |
 | A conversation summary fails | The next 30-message boundary produces a newer one. |
-| An AI provider fails | Not a job concern: the provider fallback chain in `modules/ai/fallbackChain.ts` tries the next provider, with a 1-hour cooldown on the failing one. |
+| An AI provider fails | Not a job concern: the gateway walks the call type's model chain (`fallback_models`) itself; `modules/ai/fallbackChain.ts` only retries once if the gateway can't be reached, and cools the gateway key if it rejects ours. |
 | Webhook persistence fails | The route answers `500`, so Flutterwave redelivers. (Processing failures *after* a successful insert are different — see §10.) |
 
 ### 7.4 Crash recovery and shutdown
