@@ -403,3 +403,39 @@ Pino structured logs. Each worker logs `Job completed` (`queueName`, `jobName`, 
 4. For persona or upload problems, read the `generation_status`, `persona_sources.status` and `uploads.status` / `av_scan_status` columns — these are the user-visible state the handlers write.
 5. Fix the cause, then `POST /api/v1/admin/jobs/:id/retry`. Check the "Idempotent?" column in §4 first: do not blindly retry `attempt_renewal_charge` or an email job.
 
+---
+
+## 9. Adding a Job
+
+1. **Write the logic as a service function** in the relevant `modules/*` folder, taking plain parameters. The worker handler should only unpack `job.data` and call it.
+2. **Add a handler file** under `jobs/workers/` and register it in the `HANDLERS` map in `jobs/index.ts`. The key is the job name.
+3. **Pick the queue.** Reuse one of the five (§3.2) unless the new work needs different retry, retention or concurrency; a new queue means adding it to `QueueName`, `QUEUE_NAMES` and `DEFAULT_JOB_OPTIONS` in `jobs/queues.ts`, to `QUEUE_CONCURRENCY` in `jobs/index.ts`, and to the separate `QUEUE_NAMES` list in `jobs/deadLetterPagination.ts` so its failures show up in the admin feed.
+4. **Enqueue with `enqueue(queue, name, data, options)`** — not `getQueue().add()` — so the queue defaults apply. Pass `idempotencyKey` if two enqueues for the same logical work are possible.
+5. **Make the handler safe to run twice** (upsert, conditional update, or a guard), and decide deliberately whether it should throw (get retried) or record a terminal failure and return.
+6. **To schedule it**, add an entry to `SCHEDULES` in `jobs/scheduler.ts`. Remember that scheduled jobs get no retry options (§5.2). To *remove* a schedule, also call `upsertJobScheduler`'s counterpart `removeJobScheduler(jobName)` once against the live Redis; deleting the entry alone leaves the old scheduler firing.
+
+---
+
+## 10. Known Limitations
+
+These are gaps found while documenting the system, not design choices. Each is traced to the code named.
+
+1. **Webhook events are not re-driven if the enqueue fails.** `webhook.routes.ts` inserts the `webhook_events` row, answers `200`, and *then* awaits `enqueue('billing', 'process_webhook_event', …)`. If the enqueue fails (Redis blip), the row stays `processed = false` and nothing sweeps for such rows. A redelivery from Flutterwave hits the unique constraint, is treated as a duplicate and answered `200` without being processed. A periodic job that re-enqueues old unprocessed `webhook_events` would close this.
+
+2. **`attempt_renewal_charge` can charge a card more than once on retry.** `chargeRenewal` builds a fresh `tx_ref` from `Date.now()` on every call, so each call is a new charge. If the provider charge succeeds but `reconcile_successful_payment` then errors, the handler throws, and because the job was added through `enqueue('billing', …)` it carries `attempts: 5` — BullMQ re-runs it, and the re-run charges again. The handler's own comment says this case must raise an alert rather than be lost; the retry configuration works against the "must not run again" half. Derive the `tx_ref` from `subscriptionId` and `current_period_end` (so a retry verifies the existing charge), or enqueue renewals with `attempts: 1`.
+
+3. **A job with an unknown name completes silently.** The worker logs `No handler registered for job` and returns, so BullMQ records success. A renamed job or a stale enqueue disappears without a failure.
+
+4. **Scheduled jobs have one attempt and unbounded history.** See §5.2 and §7.1. Passing `opts` in the scheduler template (`attempts`, `backoff`, `removeOnComplete`, `removeOnFail`) would apply the per-queue policy; today the hourly purges alone add about 48 retained completed-job records a day.
+
+5. **Observability is thin.** Workers listen only for `failed` (not `error` or `stalled`), emit no metrics, and do not report to Sentry (§8.3). There is no alert on "a scheduled job did not run".
+
+6. **Upload scan ordering is not enforced.** `POST /personas` with an upload source enqueues extraction immediately, and `extract_persona_source` does not check `uploads.av_scan_status`. The intended client flow completes (and scans) the upload first, but a request that creates the persona before the scan finishes would parse an unscanned file, and the scanner would then enqueue a second extraction when it completes.
+
+7. **A failed data export is silent.** If writing the export file to Storage fails, `export_user_data` logs and returns without throwing or notifying the user, although `GET /user/export` told them they would be notified.
+
+8. **Not re-run safe:** `export_user_data`, `send_weekly_summary`, `send_payment_failed_email` and `dispatch_weekly_summaries` have no deduplication; `recompute_skill_trend` appends a row per run; `recompute_curriculum`'s supersede and insert are separate statements, so two concurrent runs for the same user can leave two `active` plans.
+
+9. **Redis is a hard dependency** of the API as well as the workers (§6).
+
+10. **No forced shutdown timeout** (§7.4).
