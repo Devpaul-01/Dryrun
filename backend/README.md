@@ -3,8 +3,9 @@
 API and background-worker backend for DryRun — a sales practice/coaching
 platform. Founders practice cold outreach, objection handling, and
 negotiation against an AI-generated buyer persona, then get scored coaching
-feedback. This repo is the backend only; the client is a separate Expo
-(React Native) mobile app.
+feedback. This is the `backend/` package of the DryRun monorepo; the Expo
+(React Native) mobile client lives next to it in `frontend/` (see
+[`../frontend/README.md`](../frontend/README.md)).
 
 ## Stack
 
@@ -38,7 +39,7 @@ feedback. This repo is the backend only; the client is a separate Expo
   documented step-by-step in each middleware file's own header comment.
 - `config/*` — typed, centralized environment config, plus the Redis/Supabase/
   cache/logger singletons every other module imports from.
-- `src/db/migrations/` — the real, numbered migration history (0001-0015)
+- `src/db/migrations/` — the real, numbered migration history (0001-0017)
   and the actual source of truth for the schema; `src/db/schema.sql` is a
   generated reference snapshot of what they produce (see "Database setup"
   below).
@@ -84,7 +85,7 @@ cp .env.example .env
 ### 3. Database
 
 Run the migrations in `src/db/migrations/` against your Supabase project's
-Postgres database, in numeric order (0001 through 0015) — via `psql`, or
+Postgres database, in numeric order (0001 through 0017) — via `psql`, or
 the Supabase CLI's migration workflow. See `src/db/migrations/README.md`
 for exact commands and the dependency notes between files. This is the
 real, verified source of truth for the schema: every one of these files
