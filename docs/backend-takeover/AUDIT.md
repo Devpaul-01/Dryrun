@@ -1,5 +1,7 @@
 # Backend Audit — Pass 1
 
+> **Reading this file:** it is a dated, append-only log of audit passes, not a description of the current state. Findings in early passes were later fixed — for example, the "no CI, no test runner" finding in Pass 1 was resolved in Pass 13, and the migration directories in §3 were consolidated. Check the pass dates, and the current code, before treating a finding as open. For the current state see the [root README](../../README.md#current-gaps-stated-plainly) and [`BACKGROUND_JOBS.md` §10](../BACKGROUND_JOBS.md#10-known-limitations).
+
 Date: 2026-10-30
 Scope: `backend/` (Express/TS API + BullMQ workers), plus top-level `db/` and duplicated `backend/db/`.
 
