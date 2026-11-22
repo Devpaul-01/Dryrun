@@ -63,6 +63,14 @@ job scheduler) is Redis-backed and safe under concurrent instances, not
 in-process memory. See inline comments in `config/redis.ts` and
 `jobs/scheduler.ts` for the specific mechanisms.
 
+## Related documentation
+
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — system design and trade-offs
+- [`../docs/BACKGROUND_JOBS.md`](../docs/BACKGROUND_JOBS.md) — queues, workers, scheduler, Redis usage
+- [`../docs/CONFIGURATION.md`](../docs/CONFIGURATION.md) — every environment variable
+- [`src/db/migrations/README.md`](./src/db/migrations/README.md) — applying the schema
+- [`test/README.md`](./test/README.md) — running the test suites
+
 ## Setup
 
 ### 1. Prerequisites
