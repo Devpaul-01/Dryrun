@@ -72,7 +72,7 @@ With `NODE_ENV=production` and any of the three Flutterwave keys missing, `env.t
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SENTRY_DSN` | empty | Sentry is initialised only when set (`app.ts`), with `tracesSampleRate: 0.1`. |
+| `SENTRY_DSN` | empty | Sentry is initialised only when set (`app.ts`), with `tracesSampleRate: 0.1`. Errors are captured by the HTTP error handler (`middleware/errorHandler.ts`); background-job failures are not sent to Sentry, so watch the failed-job and dead-letter views described in [BACKGROUND_JOBS.md §8](./BACKGROUND_JOBS.md#8-operating-and-monitoring). |
 | `SENTRY_ENVIRONMENT` | `development` | |
 | `POSTHOG_API_KEY` | empty | Product analytics. |
 | `POSTHOG_HOST` | `https://app.posthog.com` | |
