@@ -260,6 +260,18 @@ The live-turn response — the single most important reliability mechanism in th
 
 A separate, cheap, rule-based **scoring consistency check** runs as a background job after every live turn — not a second AI call, deliberately, since this is a monitoring signal rather than a gate — and flags (never blocks) a turn where the model's reported interest direction sharply disagrees with a keyword-based tone read on what the user actually wrote.
 
+What those validated fields drive on the client: the interest, trust and confusion meters above the transcript, and the momentum chip beside them, are driven by the live state returned with each turn.
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-23-live-session.png" alt="Live session: the buyer replies in character while interest, trust and confusion meters update every turn" width="240"><br><sub>Live session: the meters are rendered from the schema-validated turn response</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### Prompt-injection defense is structural, not just instructional
 
 Every prompt builder wraps user-authored or externally-sourced content (a founder's message, a pasted persona source, extracted document text) in explicit delimiter tags and tells the model outright that content inside those tags is data, never instructions — but the schema validation described above is the real second line of defense: even if an injected instruction somehow altered the model's output, it still has to pass strict range/schema validation to take effect at all.
@@ -346,6 +358,18 @@ flowchart TB
 **Extraction picks the right tool per source kind**, not one generic parser: `pdf-parse` for PDFs, `mammoth` for DOCX, a stripped-HTML fetch for public URLs (deliberately public-page-only — no authenticated scraping, a stated product constraint), and a dedicated vision-model OCR path for images. The OCR path is kept intentionally narrow and separate from `callWithFallback()`: it calls the same gateway directly (with a vision-capable model chain) rather than going through the shared pipeline, because widening the shared `ProviderCallOptions` type to support image content blocks would touch all five prompt builders for a capability only this one call needs — a deliberate scope boundary, not an oversight. It still gets provider failover from the gateway, but not the per-workspace budget or usage log.
 
 **Optimistic concurrency protects a user's manual edit against an in-flight background write.** If a user edits a still-"generating" persona placeholder while synthesis is running, the synthesis worker's final write is conditioned on the persona's `updated_at` matching what it captured before the AI call started; any concurrent user edit advances that timestamp, so the conditional update matches zero rows and the worker skips its own write rather than silently overwriting what the user just typed.
+
+The four input modes on the persona-creation screen (describe, paste text, URL, upload) all enter this pipeline; the last three share `POST /personas/from-source`.
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/phone-light-09-buyer-new.png" alt="New buyer: describe one, paste text, use a URL, or upload a document" width="240"><br><sub>New buyer: manual entry, pasted text, a public URL, or an uploaded document</sub></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
