@@ -282,6 +282,8 @@ Five BullMQ queues, chosen deliberately rather than one generic queue — becaus
 | `notifications` | 15 | 3 attempts, exponential backoff | Push, email, weekly summaries |
 | `maintenance` | 2 | 3 attempts, exponential backoff | Purges, archival, sampling, dunning trigger |
 
+The queue-by-queue catalog, Redis usage, reliability behaviour and known limitations are documented in [`docs/BACKGROUND_JOBS.md`](./docs/BACKGROUND_JOBS.md).
+
 Twenty-one job handlers total, dispatched from a single name → handler map (`jobs/index.ts`) rather than per-queue routing logic. Seven cron schedules registered via BullMQ's Job Scheduler API (`upsertJobScheduler`) — a deliberate replacement for BullMQ's now-deprecated repeatable-jobs API, which required a manual distributed lock around a non-atomic read-delete-add sequence to avoid two booting worker replicas racing each other; the newer API implements "does a scheduler with this ID exist, update or create" as one atomic server-side operation, so the manual lock is removed entirely rather than relocated.
 
 ```mermaid
