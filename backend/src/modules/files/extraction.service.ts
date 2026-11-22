@@ -4,6 +4,7 @@ import net from 'net';
 import { createLogger } from '../../config/logger';
 import { env } from '../../config/env';
 import { ApiError } from '../../lib/apiError';
+import { gatewayChat, isGatewayConfigured } from '../ai/providers/gateway.provider';
 
 const log = createLogger('extraction-service');
 const MAX_EXTRACTED_CHARS = 20000; // same cap as pasted-text sources, bounds prompt-stuffing risk
@@ -161,30 +162,24 @@ export async function extractTextFromUrl(url: string): Promise<string> {
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // matches upload.service.ts's own upload size cap — this function is never the first line of size enforcement, but never trusts a caller blindly either
 const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg']); // matches upload.service.ts's ALLOWED_MIME_TYPES for image/*
 const OCR_TIMEOUT_MS = 30000;
-const VISION_MODEL = 'gpt-4o-mini'; // the one already-registered provider model in this codebase with vision support
 
 /**
  * OCR/vision extraction for images (business cards, screenshots). Routed
- * through a direct call to OpenAI's vision-capable Chat Completions
- * endpoint — NOT through modules/ai/fallbackChain.ts's callWithFallback().
- * That shared pipeline's ProviderCallOptions.messages[].content is typed
- * as a plain string everywhere (promptBuilder.ts's five prompt builders
- * all assume this), and widening it to also support OpenAI's
- * array-of-content-blocks image shape would touch every one of those
- * builders for a capability only this one narrow call needs. Kept
- * narrow and separate from the general persona-synthesis prompt path per
- * §19.7 — this call is scoped only to OCR/extraction, never general
- * reasoning, consistent with what this function's original comment
- * already stated before it had a real implementation.
- *
- * Uses only the first configured OpenAI key (OPENAI_API_KEY_1) directly,
- * not the full multi-key/cooldown fallback registry — image-based
- * persona sources are a minor, infrequent input path (one call per
- * uploaded image during persona-from-source ingestion), not a
- * high-volume path like live-turn chat that justifies the fallback
- * chain's operational complexity. If this path's volume or reliability
- * needs grow, promoting it into the shared fallback chain (by widening
- * ProviderCallOptions as described above) is the natural next step.
+ * through the llm-gateway's vision model chain (env.ai.gateway.visionModels)
+ * via gatewayChat() directly — NOT through modules/ai/fallbackChain.ts's
+ * callWithFallback(). That shared pipeline's ProviderCallOptions
+ * .messages[].content is typed as a plain string everywhere
+ * (promptBuilder.ts's five prompt builders all assume this), and widening
+ * it to also support the array-of-content-blocks image shape would touch
+ * every one of those builders for a capability only this one narrow call
+ * needs. gatewayChat() accepts content parts natively, and the gateway
+ * itself handles provider selection, vision-capability filtering and
+ * failover, so this call still gets multi-provider resilience without the
+ * per-workspace budget/usage-log layer (persona-source ingestion is a
+ * minor, infrequent path — one call per uploaded image — with no
+ * workspace context at this call site). Kept narrow and separate from the
+ * general persona-synthesis prompt path per §19.7 — this call is scoped
+ * only to OCR/extraction, never general reasoning.
  *
  * MEMORY EFFICIENCY: `buffer.toString('base64')` already produces a new
  * string (base64 is ~33% larger than the binary it encodes) — this is
@@ -231,13 +226,8 @@ export async function extractTextFromImage(buffer: Buffer, mimeType: string = 'i
     return '';
   }
 
-  // FIX (audit finding M6): reads through env.ts's centralized accessor
-  // instead of process.env directly — OPENAI_API_KEY_1 is index 0 of the
-  // openai provider's key array (env.ai.providerKeys.openai), the exact
-  // same accessor fallbackChain.ts now uses.
-  const apiKey = env.ai.providerKeys.openai[0];
-  if (!apiKey) {
-    log.warn('extractTextFromImage: no OpenAI API key configured (OPENAI_API_KEY_1) — OCR unavailable');
+  if (!isGatewayConfigured()) {
+    log.warn('extractTextFromImage: AI gateway not configured (GATEWAY_BASE_URL / GATEWAY_API_KEY) — OCR unavailable');
     return '';
   }
 
@@ -245,32 +235,26 @@ export async function extractTextFromImage(buffer: Buffer, mimeType: string = 'i
     const base64Image = buffer.toString('base64');
     const dataUrl = `data:${mimeType};base64,${base64Image}`;
 
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: VISION_MODEL,
-        temperature: 0,
-        max_tokens: 1000,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: 'Extract all readable text from this image verbatim. If there is no readable text, respond with an empty string. Do not describe the image, only transcribe text present in it.',
-              },
-              { type: 'image_url', image_url: { url: dataUrl } },
-            ],
-          },
-        ],
-      },
-      {
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        timeout: OCR_TIMEOUT_MS,
-      }
-    );
+    const result = await gatewayChat({
+      models: env.ai.gateway.visionModels,
+      temperature: 0,
+      maxTokens: 1000,
+      timeoutMs: OCR_TIMEOUT_MS,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Extract all readable text from this image verbatim. If there is no readable text, respond with an empty string. Do not describe the image, only transcribe text present in it.',
+            },
+            { type: 'image_url', image_url: { url: dataUrl } },
+          ],
+        },
+      ],
+    });
 
-    const extracted = response.data?.choices?.[0]?.message?.content ?? '';
+    const extracted = result.content;
     return String(extracted).slice(0, MAX_EXTRACTED_CHARS);
   } catch (err) {
     // Best-effort by design (see function header) — never throw out of
