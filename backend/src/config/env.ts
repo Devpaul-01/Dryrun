@@ -27,6 +27,19 @@ function optionalInt(name: string, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function splitCsv(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** A set-but-blank variable (e.g. `NAME=` copied from .env.example) falls back to the default, so a list is never silently empty. */
+function optionalCsv(name: string, fallback: string): string[] {
+  const parsed = splitCsv(process.env[name] ?? '');
+  return parsed.length > 0 ? parsed : splitCsv(fallback);
+}
+
 /**
  * FIX (audit finding M6): AI provider keys previously bypassed this module
  * entirely — fallbackChain.ts and extraction.service.ts both read
@@ -80,7 +93,39 @@ export const env = {
 
   redisUrl: () => required('REDIS_URL'),
 
+  /**
+   * All AI traffic goes through one self-hosted llm-gateway
+   * (github.com/Devpaul-01/llm-gateway), an OpenAI-compatible router that
+   * owns provider selection, per-request model fallback, and upstream key
+   * rotation/cooldown. This app therefore needs exactly one base URL and
+   * one gateway key — the old CEREBRAS/GROQ/OPENAI_API_KEY_1..5 variables
+   * and the *_MODEL_PRIORITY provider lists are gone; provider keys now
+   * live in the gateway's own project config.
+   *
+   * Each *Models list is an ordered chain: the first entry is sent as the
+   * request's `model`, the rest as `fallback_models`. Entries use the
+   * gateway's own syntax — a bare model name it already maps to a provider
+   * (e.g. `llama-3.3-70b-versatile`) or an explicit `provider:model`
+   * (e.g. `cerebras:gpt-oss-120b`).
+   */
   ai: {
+    gateway: {
+      baseUrl: optional('GATEWAY_BASE_URL').replace(/\/+$/, ''),
+      apiKey: optional('GATEWAY_API_KEY'),
+      // Fastest-tier chain for live conversation turns.
+      liveTurnModels: optionalCsv('AI_GATEWAY_LIVE_TURN_MODELS', 'cerebras:gpt-oss-120b,llama-3.3-70b-versatile,gpt-4o-mini'),
+      // Every other call type (persona synthesis, debriefs, scoring, ...) —
+      // can tolerate a slower/cheaper first choice.
+      derivativeModels: optionalCsv('AI_GATEWAY_DERIVATIVE_MODELS', 'llama-3.3-70b-versatile,gpt-4o-mini,cerebras:gpt-oss-120b'),
+      // Image requests (OCR). Every entry must be vision-capable — the
+      // gateway filters non-vision candidates out of an image request.
+      visionModels: optionalCsv('AI_GATEWAY_VISION_MODELS', 'gpt-4o-mini,meta-llama/llama-4-scout-17b-16e-instruct'),
+      // Whole-request timeout. Must cover the gateway's own failover chain
+      // (up to one attempt per model in the list), not a single upstream call.
+      timeoutMs: optionalInt('AI_GATEWAY_TIMEOUT_MS', 60000),
+      // How long to stop calling the gateway after it rejects OUR key (401/403).
+      keyCooldownSeconds: optionalInt('AI_GATEWAY_KEY_COOLDOWN_SECONDS', 300),
+    },
     liveTurnPriority: optional('AI_LIVE_TURN_MODEL_PRIORITY', 'cerebras,groq,openai').split(','),
     derivativePriority: optional('AI_DERIVATIVE_MODEL_PRIORITY', 'groq,openai,cerebras').split(','),
     // Indexed 0-4, corresponding to _1 through _5 — an entry is `undefined`
