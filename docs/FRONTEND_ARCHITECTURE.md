@@ -753,6 +753,16 @@ Three-step flow (can be a single scroll-and-select screen rather than hard page-
 - **Backend:** `POST /sessions`. **Loading UX matters here**: if no `persona_id` was chosen, this call does synchronous AI persona generation server-side and can take several seconds — show a distinct "Building your buyer…" loading state (not a generic spinner) so the wait reads as purposeful, not broken.
 - **Feature gate:** a `402 SESSION_LIMIT_REACHED` here routes to the upgrade sheet with the plan/limit from `details`, framed as "you've used your N free sessions this month," not a dead end.
 
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="screenshots/phone-light-10-session-wizard.png" alt="New session wizard: scenario, buyer, pressure modifiers, difficulty and goal" width="220"><br><sub>As built: the new-session wizard</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### 7.5 Live Simulation Screen
 
 The core screen — full design treatment in §8. Summary:
@@ -762,12 +772,32 @@ The core screen — full design treatment in §8. Summary:
 - **Auto-transition:** a response with `goal_achieved: true` immediately routes to `/session/[id]/ending` — no further input accepted.
 - **Error states:** a failed send (network or AI-unavailable after the backend's one retry) shows the message as "failed to send" with a retry action reusing the same idempotency key — never duplicates the user's turn.
 
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="screenshots/phone-light-23-live-session.png" alt="Live session: the buyer replies in character while interest, trust and confusion meters update every turn" width="220"><br><sub>As built: the live simulation screen</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### 7.6 Persona Library & Creation
 
 - **Library (`persona/index`):** searchable/filterable list (`GET /personas`), each row shows name/role/source-type badge, tap → detail.
 - **Creation (`persona/new`):** a segmented choice — Describe manually / Paste text / From a URL / Upload a document — each mapping to the right fields for `POST /personas` (manual) or `POST /personas/from-source` (the other three, sharing one endpoint distinguished by `source_kind`). Upload flow chains through §2.9's signed-URL sequence before calling `from-source` with the resulting `upload_id`.
 - **Generating state:** immediately after a `202`, show the "Generating…" placeholder persona card with a subtle pulsing/skeleton treatment, subscribed to the realtime channel + polling fallback (§4.4); transitions to the filled-in card the moment `generation_status` flips.
 - **Detail/edit (`persona/[id]`):** editable fields matching `PATCH /personas/:id`'s schema (note: `company_context` is **not** editable per the current API — see §11 — so the edit form should omit that field entirely rather than silently failing to persist it).
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="screenshots/phone-light-09-buyer-new.png" alt="New buyer: describe one, paste text, use a URL, or upload a document" width="220"><br><sub>As built: persona creation</sub></td>
+</tr>
+</table>
+
+</div>
 
 ### 7.7 Ending Transition
 
@@ -782,17 +812,47 @@ The core screen — full design treatment in §8. Summary:
 - **Data:** `GET /sessions/:id/debrief` + `GET /sessions/:id` (for `goal_achieved`) — poll pattern from §4.4 while `debrief === null`, with a skeleton/"coaching your results…" state, not a spinner-only screen, during the wait.
 - **Empty/pending state:** explicit messaging that scoring runs in the background and a notification will arrive — set expectation rather than let the poll feel broken if it takes 10–20s.
 
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="screenshots/phone-light-11-debrief.png" alt="Debrief: what worked, what to improve, a coachable moment and a six-axis skill score" width="220"><br><sub>As built: the debrief</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### 7.9 Replay
 
 - **Purpose:** full transcript with the buyer's private monologue revealed per turn — the "what were they actually thinking" payoff.
 - **Components:** chat-style transcript, each buyer turn expandable to reveal `internal_monologue` with a `monologue_severity`-colored accent; an interest/trust/confusion line chart built from `heatmap` (the `session_state_snapshots` series).
 - **Data:** `GET /sessions/:id/replay` (completed sessions only — gate navigation to this screen on `status === 'completed'`).
 
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="screenshots/phone-light-12-replay.png" alt="Replay: a turn-by-turn chart of how the buyer felt, with their private thoughts revealed" width="220"><br><sub>As built: the replay</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### 7.10 Comparison (Retry)
 
 - **Purpose:** the numeric before/after.
 - **Components:** side-by-side six-axis bars (original vs retry), per-axis delta chips (colored by sign), the AI-authored one-line `summary`, goal-achieved badges for both attempts.
 - **Data:** `GET /sessions/:id/comparison` (called with the **retry** session's id) — poll-until-populated.
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="screenshots/phone-light-13-comparison.png" alt="Before and after: per-axis score deltas between the first attempt and the retry" width="220"><br><sub>As built: the retry comparison</sub></td>
+</tr>
+</table>
+
+</div>
 
 ### 7.11 History
 
@@ -806,11 +866,31 @@ The core screen — full design treatment in §8. Summary:
 - **Purpose:** the "staying on track over time" loop made visible.
 - **Components:** skill-trend chart (`GET /skill-trend`), per-goal-type achievement rates (`GET /skill-trend/goals`), current curriculum recommendation card with a dismiss action (`POST /curriculum/dismiss`), badge shelf (`GET /badges`).
 
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="screenshots/phone-light-04-progress.png" alt="Progress: skill trend, suggested practice plan, goal success rate and badges" width="220"><br><sub>As built: progress</sub></td>
+</tr>
+</table>
+
+</div>
+
 ### 7.13 Playbooks
 
 - **Library:** list with share-status indicator.
 - **Detail:** opening message / discovery questions / objection responses / closing CTA / key insight, each independently copyable (tap-to-copy); version history (`GET /:id/versions`); share sheet toggling `share_attribution_enabled` and generating/revoking the `share_token`, with a native share action for the resulting public URL.
 - **Public view (`(public)/playbook/[token]`):** read-only rendering of the same content for a non-authenticated visitor — no app-shell chrome, just the content + a "Build your own in DryRun" CTA back to signup.
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="screenshots/phone-light-15-playbook-detail.png" alt="Playbook: opening message, discovery questions and objection responses, each copyable" width="220"><br><sub>As built: playbook detail</sub></td>
+</tr>
+</table>
+
+</div>
 
 ### 7.14 Workspace / Team
 
