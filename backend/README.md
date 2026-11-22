@@ -190,21 +190,19 @@ directly rather than through the fallback chain.
 Being upfront about where this stands, rather than letting a reviewer
 discover it themselves:
 
-- **No automated test suite yet.** Every fix and feature in this codebase's
-  history was verified via real TypeScript compilation against the actual
-  dependency versions (not mocked), plus targeted runtime simulations for
-  concurrency-sensitive logic (documented inline at each such fix) — but
-  that's not a substitute for a real test suite, which is in progress
-  separately.
-- **No CI pipeline configured yet** (lint/typecheck/test-on-PR).
+- **Test coverage is deliberately narrow.** `npm test` runs two Vitest
+  suites: the AI output-validation and retry pipeline, and the
+  `reconcile_successful_payment` RPC against a real Postgres (see
+  [`test/README.md`](./test/README.md)). There are no route-level or
+  integration tests, and the 21 job handlers, the webhook route, the
+  idempotency primitive and the cache layer have no automated coverage.
+  CI (`.github/workflows/backend-ci.yml`) runs typecheck, lint, build and
+  these tests on every change.
 - **No Dockerfile yet** — the three entrypoints above run directly via
   Node; containerizing them is a natural next step for real deployment.
-- **`addSeats` (billing.service.ts) has no payment step** — a workspace
-  admin/owner can add seats without an actual charge. Documented explicitly
-  in that function's own comment: building real seat billing needs a
-  per-seat price on the plan model (doesn't exist yet) and a proration
-  policy, which are product decisions, not implementation gaps to quietly
-  paper over.
+- **Webhook events are not re-driven, and several background-job gaps are
+  documented rather than fixed** — see
+  [`../docs/BACKGROUND_JOBS.md` §10](../docs/BACKGROUND_JOBS.md#10-known-limitations).
 - **Session-goal-achievement and session-comparison are recently added**
   and haven't seen real usage volume yet — the logic is verified by
   compilation and hand-traced simulation, not production traffic.
